@@ -846,6 +846,8 @@ public class OlapScanNode extends AbstractOlapTableScanNode {
         if (Config.enable_experimental_vector) {
             if (vectorSearchOptions != null && vectorSearchOptions.isEnableUseANN()) {
                 output.append(vectorSearchOptions.getExplainString(prefix));
+            } else if (vectorSearchOptions != null && vectorSearchOptions.isUseFallback()) {
+                output.append(vectorSearchOptions.getExplainString(prefix));
             } else {
                 output.append(prefix).append("VECTORINDEX: OFF").append("\n");
             }
@@ -1165,7 +1167,8 @@ public class OlapScanNode extends AbstractOlapTableScanNode {
                 msg.olap_scan_node.setNext_uniq_id(olapTable.getMaxColUniqueId());
             }
 
-            if (vectorSearchOptions != null && vectorSearchOptions.isEnableUseANN()) {
+            if (vectorSearchOptions != null &&
+                    (vectorSearchOptions.isEnableUseANN() || vectorSearchOptions.isUseFallback())) {
                 msg.olap_scan_node.setVector_search_options(vectorSearchOptions.toThrift());
             }
 

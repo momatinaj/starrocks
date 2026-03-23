@@ -108,6 +108,7 @@ private:
 
     bool _use_vector_index = false;
     bool _use_ivfpq = false;
+    std::string _vector_fallback_mode;
     std::string _vector_distance_column_name;
     SlotId _vector_slot_id;
 

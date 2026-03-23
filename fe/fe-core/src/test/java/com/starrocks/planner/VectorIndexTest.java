@@ -36,8 +36,12 @@ package com.starrocks.planner;
 
 import com.starrocks.common.Config;
 import com.starrocks.common.FeConstants;
+import com.starrocks.common.VectorSearchOptions;
 import com.starrocks.sql.analyzer.SemanticException;
+import com.starrocks.sql.plan.ExecPlan;
 import com.starrocks.sql.plan.PlanTestBase;
+import com.starrocks.thrift.TPlanNode;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -66,6 +70,18 @@ public class VectorIndexTest extends PlanTestBase {
                 + " c0 INT,"
                 + " c1 array<float> NOT NULL,"
                 + " c2 array<float>,"
+                + " INDEX index_vector1 (c1) USING VECTOR ('metric_type' = 'l2_distance', "
+                + "'is_vector_normed' = 'false', 'M' = '512', 'index_type' = 'hnsw', 'dim'='5') "
+                + ") "
+                + "DUPLICATE KEY(c0) "
+                + "DISTRIBUTED BY HASH(c0) BUCKETS 1 "
+                + "PROPERTIES ('replication_num'='1');");
+
+        starRocksAssert.withTable("CREATE TABLE test.test_spatial_l2 ("
+                + " c0 INT,"
+                + " lng DOUBLE,"
+                + " lat DOUBLE,"
+                + " c1 array<float> NOT NULL,"
                 + " INDEX index_vector1 (c1) USING VECTOR ('metric_type' = 'l2_distance', "
                 + "'is_vector_normed' = 'false', 'M' = '512', 'index_type' = 'hnsw', 'dim'='5') "
                 + ") "
@@ -364,6 +380,45 @@ public class VectorIndexTest extends PlanTestBase {
                 "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
         plan = getVerboseExplain(sql);
         assertContains(plan, "VECTORINDEX: OFF");
+    }
+
+    @Test
+    public void testSpatialFallbackExactDistance() throws Exception {
+        String sql = "select c1 from test_spatial_l2 " +
+                "where st_contains(st_circle(116.3, 39.9, 1000), st_point(lng, lat)) " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: FALLBACK\n" +
+                "          Fallback Mode: SPATIAL_FILTER + EXACT_DISTANCE");
+        assertNotContains(plan, "__vector_approx_l2_distance");
+    }
+
+    @Test
+    public void testSpatialDistanceSphereFallbackExactDistance() throws Exception {
+        String sql = "select c1 from test_spatial_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: FALLBACK\n" +
+                "          Fallback Mode: SPATIAL_FILTER + EXACT_DISTANCE");
+        assertNotContains(plan, "__vector_approx_l2_distance");
+    }
+
+    @Test
+    public void testSpatialFallbackPropagatesToThrift() throws Exception {
+        String sql = "select c1 from test_spatial_l2 " +
+                "where st_contains(st_circle(116.3, 39.9, 1000), st_point(lng, lat)) " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        ExecPlan execPlan = getExecPlan(sql);
+        OlapScanNode scanNode = (OlapScanNode) execPlan.getScanNodes().get(0);
+        TPlanNode planNode = new TPlanNode();
+        scanNode.toThrift(planNode);
+
+        Assertions.assertTrue(planNode.getOlap_scan_node().isSetVector_search_options());
+        Assertions.assertFalse(planNode.getOlap_scan_node().getVector_search_options().isEnable_use_ann());
+        Assertions.assertEquals("SPATIAL_FILTER_EXACT",
+                planNode.getOlap_scan_node().getVector_search_options().getQuery_params()
+                        .get(VectorSearchOptions.QUERY_PARAM_FALLBACK_MODE));
     }
 
     @Test

@@ -24,6 +24,7 @@
 #include "storage/index/index_descriptor.h"
 #include "storage/index/vector/tenann/del_id_filter.h"
 #include "storage/index/vector/tenann/tenann_index_utils.h"
+#include "storage/index/vector/vector_search_option.h"
 #include "storage/index/vector/vector_index_writer.h"
 #include "storage/rowset/bitmap_index_reader.h"
 #include "storage/rowset/bitmap_index_writer.h"
@@ -179,6 +180,36 @@ TEST_F(VectorIndexSearchTest, test_select_empty_mark) {
         LOG(WARNING) << e.what();
     }
 #endif
+}
+
+TEST_F(VectorIndexSearchTest, test_fallback_query_param_does_not_enable_ann) {
+    VectorSearchOption option;
+    option.use_vector_index = false;
+    option.fallback_mode = "SPATIAL_FILTER_EXACT";
+    option.query_params[VectorSearchOption::kFallbackModeKey] = option.fallback_mode;
+
+    ASSERT_TRUE(option.use_vector_fallback());
+    ASSERT_FALSE(option.use_vector_index);
+    ASSERT_EQ(option.query_params[VectorSearchOption::kFallbackModeKey], "SPATIAL_FILTER_EXACT");
+}
+
+TEST_F(VectorIndexSearchTest, test_get_vector_meta_ignores_fallback_query_param) {
+    auto tablet_index = prepare_tablet_index();
+    tablet_index->add_common_properties("index_type", "hnsw");
+    tablet_index->add_common_properties("dim", "3");
+    tablet_index->add_common_properties("is_vector_normed", "false");
+    tablet_index->add_common_properties("metric_type", "l2_distance");
+    tablet_index->add_index_properties("efconstruction", "40");
+    tablet_index->add_index_properties("M", "16");
+    tablet_index->add_search_properties("efsearch", "40");
+
+    std::map<std::string, std::string> query_params{
+            {VectorSearchOption::kFallbackModeKey, "SPATIAL_FILTER_EXACT"},
+            {"efsearch", "64"}};
+
+    auto status = get_vector_meta(tablet_index, query_params);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(status.value(), nullptr);
 }
 
 } // namespace starrocks

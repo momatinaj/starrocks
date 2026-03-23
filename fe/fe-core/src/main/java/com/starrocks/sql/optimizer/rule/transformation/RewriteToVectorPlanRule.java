@@ -56,6 +56,8 @@ import static com.starrocks.analysis.BinaryType.GE;
 import static com.starrocks.analysis.BinaryType.LE;
 import static com.starrocks.catalog.FunctionSet.APPROX_COSINE_SIMILARITY;
 import static com.starrocks.catalog.FunctionSet.APPROX_L2_DISTANCE;
+import static com.starrocks.catalog.FunctionSet.ST_CONTAINS;
+import static com.starrocks.catalog.FunctionSet.ST_DISTANCE_SPHERE;
 
 public class RewriteToVectorPlanRule extends TransformationRule {
 
@@ -105,8 +107,23 @@ public class RewriteToVectorPlanRule extends TransformationRule {
                             info.vectorQuery, dim));
         }
 
+        opts.setEnableUseANN(false);
+        opts.setUseIVFPQ(false);
+        opts.setFallbackMode(VectorSearchOptions.FallbackMode.NONE);
+        opts.setPredicateRange(-1);
+        opts.setLimitK(topNOp.getLimit());
+        opts.setResultOrder(info.isAscending);
+        opts.setQueryVector(info.vectorQuery);
+
         ScalarOperator predicate = scanOp.getPredicate();
         if (predicate != null) {
+            if (containsSupportedSpatialPredicate(predicate)) {
+                opts.setFallbackMode(VectorSearchOptions.FallbackMode.SPATIAL_FILTER_EXACT);
+                LogicalOlapScanOperator newScanOp = LogicalOlapScanOperator.builder()
+                        .withOperator(scanOp)
+                        .build();
+                return List.of(OptExpression.create(topNOp, OptExpression.create(newScanOp)));
+            }
             Optional<Double> value = extractVectorRange(predicate, info);
             // If some predicates cannot be parsed to vector range, vector index cannot be used.
             if (value.isEmpty()) {
@@ -120,10 +137,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         opts.setEnableUseANN(true);
         String indexType = info.index.getProperties().get(VectorIndexParams.CommonIndexParamKey.INDEX_TYPE.name().toLowerCase());
         opts.setUseIVFPQ(VectorIndexParams.VectorIndexType.IVFPQ.name().equalsIgnoreCase(indexType));
-        opts.setLimitK(topNOp.getLimit());
-        opts.setResultOrder(info.isAscending);
         opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
-        opts.setQueryVector(info.vectorQuery);
 
         if (opts.isUseIVFPQ()) {
             // Skip rewrite because IVFPQ is inaccurate and requires a brute force search after the ANN index search
@@ -274,6 +288,23 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         }
 
         return Optional.empty();
+    }
+
+    private boolean containsSupportedSpatialPredicate(ScalarOperator predicate) {
+        if (predicate instanceof CallOperator) {
+            String fnName = ((CallOperator) predicate).getFnName();
+            if (fnName.equalsIgnoreCase(ST_CONTAINS) || fnName.equalsIgnoreCase(ST_DISTANCE_SPHERE)) {
+                return true;
+            }
+        }
+
+        for (ScalarOperator child : predicate.getChildren()) {
+            if (containsSupportedSpatialPredicate(child)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

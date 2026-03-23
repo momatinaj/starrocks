@@ -83,7 +83,16 @@ Status OlapChunkSource::prepare(RuntimeState* state) {
     const TOlapScanNode& thrift_olap_scan_node = _scan_node->thrift_olap_scan_node();
     const TVectorSearchOptions& vector_search_options = thrift_olap_scan_node.vector_search_options;
     _use_vector_index = thrift_olap_scan_node.__isset.vector_search_options && vector_search_options.enable_use_ann;
-    if (_use_vector_index) {
+    if (thrift_olap_scan_node.__isset.vector_search_options) {
+        if (vector_search_options.__isset.query_params) {
+            auto it = vector_search_options.query_params.find(VectorSearchOption::kFallbackModeKey);
+            if (it != vector_search_options.query_params.end()) {
+                _vector_fallback_mode = it->second;
+                _runtime_profile->add_info_string("VectorFallbackMode", _vector_fallback_mode);
+            }
+        }
+    }
+    if (_use_vector_index || !_vector_fallback_mode.empty()) {
         _use_ivfpq = vector_search_options.use_ivfpq;
         _vector_distance_column_name = vector_search_options.vector_distance_column_name;
         _vector_slot_id = vector_search_options.vector_slot_id;
@@ -249,7 +258,7 @@ Status OlapChunkSource::_init_reader_params(const std::vector<std::unique_ptr<Ol
         _params.enable_gin_filter = thrift_olap_scan_node.enable_gin_filter;
     }
     _params.use_vector_index = _use_vector_index;
-    if (_use_vector_index) {
+    if (_params.vector_search_option != nullptr) {
         const TVectorSearchOptions& vector_options = thrift_olap_scan_node.vector_search_options;
 
         _params.vector_search_option->vector_distance_column_name = _vector_distance_column_name;
@@ -257,9 +266,19 @@ Status OlapChunkSource::_init_reader_params(const std::vector<std::unique_ptr<Ol
         for (const std::string& str : vector_options.query_vector) {
             _params.vector_search_option->query_vector.push_back(std::stof(str));
         }
-        if (_runtime_state->query_options().__isset.ann_params) {
-            _params.vector_search_option->query_params = _runtime_state->query_options().ann_params;
+        if (vector_options.__isset.query_params) {
+            _params.vector_search_option->query_params = vector_options.query_params;
+            auto it = vector_options.query_params.find(VectorSearchOption::kFallbackModeKey);
+            if (it != vector_options.query_params.end()) {
+                _params.vector_search_option->fallback_mode = it->second;
+            }
         }
+        if (_runtime_state->query_options().__isset.ann_params) {
+            for (const auto& [key, value] : _runtime_state->query_options().ann_params) {
+                _params.vector_search_option->query_params[key] = value;
+            }
+        }
+        _params.vector_search_option->use_vector_index = _use_vector_index;
         _params.vector_search_option->vector_range = vector_options.vector_range;
         _params.vector_search_option->result_order = vector_options.result_order;
         _params.vector_search_option->use_ivfpq = _use_ivfpq;

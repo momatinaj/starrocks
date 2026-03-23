@@ -189,6 +189,7 @@ private:
         int64_t k = 0;
         bool use_vector_index = false;
         std::string vector_distance_column_name;
+        std::string fallback_mode;
         int vector_column_id = -1;
         SlotId vector_slot_id = -1;
         std::unordered_map<rowid_t, float> id2distance_map;
@@ -206,6 +207,7 @@ private:
 
         // Helper method to check if rowid should always be built
         bool always_build_rowid() const { return use_vector_index && !use_ivfpq; }
+        bool use_vector_fallback() const { return !fallback_mode.empty(); }
     };
 
     // Inverted index related context, only created when needed
@@ -515,10 +517,12 @@ SegmentIterator::SegmentIterator(std::shared_ptr<Segment> segment, Schema schema
           _bitmap_index_evaluator(_schema, _opts.pred_tree),
           _predicate_columns(_opts.pred_tree.num_columns()) {
     // Initialize vector index context only when needed
-    if (_opts.use_vector_index) {
+    if (_opts.vector_search_option != nullptr &&
+        (_opts.use_vector_index || _opts.vector_search_option->use_vector_fallback())) {
         _vector_index_ctx = std::make_unique<VectorIndexContext>();
-        _vector_index_ctx->use_vector_index = true;
+        _vector_index_ctx->use_vector_index = _opts.use_vector_index;
         _vector_index_ctx->vector_distance_column_name = _opts.vector_search_option->vector_distance_column_name;
+        _vector_index_ctx->fallback_mode = _opts.vector_search_option->fallback_mode;
         _vector_index_ctx->vector_column_id = _opts.vector_search_option->vector_column_id;
         _vector_index_ctx->vector_slot_id = _opts.vector_search_option->vector_slot_id;
         _vector_index_ctx->vector_range = _opts.vector_search_option->vector_range;
@@ -526,18 +530,20 @@ SegmentIterator::SegmentIterator(std::shared_ptr<Segment> segment, Schema schema
         _vector_index_ctx->use_ivfpq = _opts.vector_search_option->use_ivfpq;
         _vector_index_ctx->query_params = _opts.vector_search_option->query_params;
 
-        if (_vector_index_ctx->vector_range >= 0 && _vector_index_ctx->use_ivfpq) {
-            _vector_index_ctx->k = _opts.vector_search_option->k * _opts.vector_search_option->pq_refine_factor *
-                                   _opts.vector_search_option->k_factor;
-        } else {
-            _vector_index_ctx->k = _opts.vector_search_option->k * _opts.vector_search_option->k_factor;
-        }
+        if (_vector_index_ctx->use_vector_index) {
+            if (_vector_index_ctx->vector_range >= 0 && _vector_index_ctx->use_ivfpq) {
+                _vector_index_ctx->k = _opts.vector_search_option->k * _opts.vector_search_option->pq_refine_factor *
+                                       _opts.vector_search_option->k_factor;
+            } else {
+                _vector_index_ctx->k = _opts.vector_search_option->k * _opts.vector_search_option->k_factor;
+            }
 #ifdef WITH_TENANN
-        _vector_index_ctx->query_view = tenann::PrimitiveSeqView{
-                .data = reinterpret_cast<uint8_t*>(_opts.vector_search_option->query_vector.data()),
-                .size = static_cast<uint32_t>(_opts.vector_search_option->query_vector.size()),
-                .elem_type = tenann::PrimitiveType::kFloatType};
+            _vector_index_ctx->query_view = tenann::PrimitiveSeqView{
+                    .data = reinterpret_cast<uint8_t*>(_opts.vector_search_option->query_vector.data()),
+                    .size = static_cast<uint32_t>(_opts.vector_search_option->query_vector.size()),
+                    .elem_type = tenann::PrimitiveType::kFloatType};
 #endif
+        }
     }
     // For small segment file (the number of rows is less than chunk_size),
     // the segment iterator will reserve a large amount of memory,

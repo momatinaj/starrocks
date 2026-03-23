@@ -27,6 +27,8 @@ class Segment;
 
 struct VectorSearchOption {
 public:
+    static constexpr const char* kFallbackModeKey = "vector_fallback_mode";
+
     int64_t k;
 
     std::vector<float> query_vector;
@@ -41,6 +43,8 @@ public:
 
     std::map<std::string, std::string> query_params;
 
+    std::string fallback_mode;
+
     double vector_range;
 
     int result_order;
@@ -50,6 +54,8 @@ public:
     double pq_refine_factor;
 
     double k_factor;
+
+    bool use_vector_fallback() const { return !fallback_mode.empty(); }
 
     VectorSearchOption() = default;
 };
