@@ -1,54 +1,62 @@
 version: '3.8'
 
+x-dev-base: &dev-base
+  image: ${STARROCKS_DEV_ENV_IMAGE:-starrocks/dev-env-ubuntu:latest}
+  volumes:
+    - .:/workspace
+    - ${MAVEN_CACHE:-./cache/m2}:/tmp/.m2
+    - ${CCACHE_DIR:-./cache/ccache}:/tmp/.ccache
+  working_dir: /workspace
+  environment:
+    - STARROCKS_HOME=/workspace
+    - STARROCKS_THIRDPARTY=/var/local/thirdparty
+    - HOME=/tmp
+    - CCACHE_DIR=/tmp/.ccache
+    - CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
+    - BUILD_TYPE=${BUILD_TYPE:-DEBUG}
+  user: "${UID:-1000}:${GID:-1000}"
+
 services:
-  starrocks-dev:
-    image: ${STARROCKS_DEV_ENV_IMAGE:-starrocks/dev-env-ubuntu:latest}
+  # Interactive shell for ad-hoc work
+  dev:
+    <<: *dev-base
     container_name: starrocks-dev-env
-    volumes:
-      - .:/workspace
-      - ~/.m2:/tmp/.m2
-      - starrocks-maven-cache:/root/.m2
-      - starrocks-build-cache:/workspace/output
-    working_dir: /workspace
-    environment:
-      - STARROCKS_HOME=/workspace
-      - HOME=/tmp
-    user: "${UID:-1000}:${GID:-1000}"
     stdin_open: true
     tty: true
     command: /bin/bash
-    networks:
-      - starrocks-dev
 
-  # Service for building Frontend
+  # Generate protobuf/thrift sources (run once after clone or proto changes)
+  gensrc:
+    <<: *dev-base
+    container_name: starrocks-gensrc
+    command: bash -c 'cd gensrc && make -j${PARALLEL:-8}'
+
   build-fe:
-    extends: starrocks-dev
+    <<: *dev-base
     container_name: starrocks-build-fe
-    command: ./build.sh --fe
+    command: ./build.sh --fe -j ${PARALLEL:-8}
 
-  # Service for building Backend
   build-be:
-    extends: starrocks-dev
+    <<: *dev-base
     container_name: starrocks-build-be
-    command: ./build.sh --be
+    command: ./build.sh --be -j ${PARALLEL:-8}
 
-  # Service for running tests
   test-fe:
-    extends: starrocks-dev
+    <<: *dev-base
     container_name: starrocks-test-fe
-    command: ./run-fe-ut.sh
+    command: ./run-fe-ut.sh -j ${PARALLEL:-8}
 
   test-be:
-    extends: starrocks-dev
+    <<: *dev-base
     container_name: starrocks-test-be
-    command: ./run-be-ut.sh
+    command: ./run-be-ut.sh --without-java-ext -j ${PARALLEL:-8}
 
-volumes:
-  starrocks-maven-cache:
-    driver: local
-  starrocks-build-cache:
-    driver: local
-
-networks:
-  starrocks-dev:
-    driver: bridge
+  # Targeted test: only run specific gtest filter
+  test-be-vector:
+    <<: *dev-base
+    container_name: starrocks-test-be-vector
+    command: >
+      ./run-be-ut.sh
+        --gtest_filter "VectorIndexSearchTest.*"
+        --without-java-ext
+        -j ${PARALLEL:-8}
