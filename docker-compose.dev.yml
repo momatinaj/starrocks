@@ -4,57 +4,54 @@ x-dev-base: &dev-base
   image: ${STARROCKS_DEV_ENV_IMAGE:-starrocks/dev-env-ubuntu:latest}
   volumes:
     - .:/workspace
-    - ${MAVEN_CACHE:-./cache/m2}:/tmp/.m2
-    - ${CCACHE_DIR:-./cache/ccache}:/tmp/.ccache
+    - ./cache/m2:/tmp/.m2
+    - ./cache/ccache:/tmp/.ccache
   working_dir: /workspace
   environment:
-    - STARROCKS_HOME=/workspace
-    - STARROCKS_THIRDPARTY=/var/local/thirdparty
-    - HOME=/tmp
-    - CCACHE_DIR=/tmp/.ccache
-    - CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-20G}
-    - BUILD_TYPE=${BUILD_TYPE:-DEBUG}
-  user: "${UID:-1000}:${GID:-1000}"
+    STARROCKS_HOME: /workspace
+    STARROCKS_THIRDPARTY: /var/local/thirdparty
+    HOME: /tmp
+    CCACHE_DIR: /tmp/.ccache
+    CCACHE_MAXSIZE: ${CCACHE_MAXSIZE:-20G}
+    BUILD_TYPE: ${BUILD_TYPE:-DEBUG}
+    MAVEN_OPTS: "-Dmaven.repo.local=/tmp/.m2/repository"
 
 services:
-  # Interactive shell for ad-hoc work
   dev:
     <<: *dev-base
-    container_name: starrocks-dev-env
+    container_name: sr-dev
     stdin_open: true
     tty: true
     command: /bin/bash
 
-  # Generate protobuf/thrift sources (run once after clone or proto changes)
   gensrc:
     <<: *dev-base
-    container_name: starrocks-gensrc
+    container_name: sr-gensrc
     command: bash -c 'cd gensrc && make -j${PARALLEL:-8}'
 
   build-fe:
     <<: *dev-base
-    container_name: starrocks-build-fe
+    container_name: sr-build-fe
     command: ./build.sh --fe -j ${PARALLEL:-8}
 
   build-be:
     <<: *dev-base
-    container_name: starrocks-build-be
-    command: ./build.sh --be -j ${PARALLEL:-8}
+    container_name: sr-build-be
+    command: ./build.sh --be --without-java-ext -j ${PARALLEL:-8}
 
   test-fe:
     <<: *dev-base
-    container_name: starrocks-test-fe
+    container_name: sr-test-fe
     command: ./run-fe-ut.sh -j ${PARALLEL:-8}
 
   test-be:
     <<: *dev-base
-    container_name: starrocks-test-be
+    container_name: sr-test-be
     command: ./run-be-ut.sh --without-java-ext -j ${PARALLEL:-8}
 
-  # Targeted test: only run specific gtest filter
   test-be-vector:
     <<: *dev-base
-    container_name: starrocks-test-be-vector
+    container_name: sr-test-vector
     command: >
       ./run-be-ut.sh
         --gtest_filter "VectorIndexSearchTest.*"
