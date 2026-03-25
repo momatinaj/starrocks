@@ -61,6 +61,7 @@ class WritableFile;
 class Chunk;
 class ColumnWriter;
 class Schema;
+class SpatialVectorIndexWriter;
 
 extern const char* const k_segment_magic;
 extern const uint32_t k_segment_magic_length;
@@ -186,6 +187,14 @@ private:
     uint32_t _num_rows = 0;
 
     DictColumnsValidMap _global_dict_columns_valid_info;
+
+    // Spatial-partitioned vector index (owned by SegmentWriter because it needs
+    // cross-column access to lat/lng columns during append_chunk).
+    std::unique_ptr<SpatialVectorIndexWriter> _spatial_vector_writer;
+    int32_t _spatial_vector_col_writer_idx = -1;
+    int32_t _spatial_lat_col_writer_idx = -1;
+    int32_t _spatial_lng_col_writer_idx = -1;
+    int _spatial_s2_level = 0;
 };
 
 } // namespace starrocks

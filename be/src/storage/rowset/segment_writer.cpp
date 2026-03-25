@@ -45,7 +45,11 @@
 #include "common/logging.h" // LOG
 #include "fs/fs.h"          // FileSystem
 #include "gen_cpp/segment.pb.h"
+#include "column/fixed_length_column.h"
+#include "geo/s2_cell_utils.h"
 #include "storage/index/index_descriptor.h"
+#include "storage/index/vector/spatial_partition_meta.h"
+#include "storage/index/vector/spatial_vector_index_writer.h"
 #include "storage/row_store_encoder.h"
 #include "storage/rowset/column_writer.h" // ColumnWriter
 #include "storage/rowset/json_column_writer.h"
@@ -182,6 +186,44 @@ Status SegmentWriter::init(const std::vector<uint32_t>& column_indexes, bool has
         opts.need_vector_index = _tablet_schema->has_index(column.unique_id(), IndexType::VECTOR);
 
         RETURN_IF_ERROR(_tablet_schema->get_indexes_for_column(column.unique_id(), &opts.tablet_index));
+
+        // Detect spatial-partitioned vector index: if the vector index has
+        // is_spatial_partitioned=true AND the lat/lng columns are present in this
+        // column batch, SegmentWriter will own the writer (not ArrayColumnWriter).
+        if (opts.need_vector_index && opts.tablet_index.count(IndexType::VECTOR)) {
+            const auto& vec_idx = opts.tablet_index.at(IndexType::VECTOR);
+            auto sp_it = vec_idx.index_properties().find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
+            if (sp_it != vec_idx.index_properties().end() && sp_it->second == "true") {
+                const auto& idx_props = vec_idx.index_properties();
+                auto lat_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLatColumnUid);
+                auto lng_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLngColumnUid);
+                if (lat_it != idx_props.end() && lng_it != idx_props.end()) {
+                    int32_t lat_uid = std::stoi(lat_it->second);
+                    int32_t lng_uid = std::stoi(lng_it->second);
+                    int32_t lat_idx = -1, lng_idx = -1;
+                    for (size_t j = 0; j < _column_indexes.size(); j++) {
+                        int32_t uid = _tablet_schema->column(_column_indexes[j]).unique_id();
+                        if (uid == lat_uid) lat_idx = static_cast<int32_t>(j);
+                        if (uid == lng_uid) lng_idx = static_cast<int32_t>(j);
+                    }
+                    if (lat_idx >= 0 && lng_idx >= 0) {
+                        _spatial_vector_col_writer_idx = static_cast<int32_t>(i);
+                        _spatial_lat_col_writer_idx = lat_idx;
+                        _spatial_lng_col_writer_idx = lng_idx;
+                        auto level_it = idx_props.find(SpatialIndexPropertyKeys::kS2Level);
+                        _spatial_s2_level = level_it != idx_props.end() ? std::stoi(level_it->second)
+                                                                       : kS2DefaultPartitionLevel;
+                        auto spatial_ti = std::make_shared<TabletIndex>(vec_idx);
+                        _spatial_vector_writer = std::make_unique<SpatialVectorIndexWriter>(
+                                spatial_ti, _opts.segment_file_mark.rowset_path_prefix,
+                                _opts.segment_file_mark.rowset_id, _segment_id, true);
+                        RETURN_IF_ERROR(_spatial_vector_writer->init());
+                        opts.need_vector_index = false;
+                    }
+                }
+            }
+        }
+
         if (opts.need_inverted_index) {
             opts.standalone_index_file_paths.emplace(
                     GIN, IndexDescriptor::inverted_index_file_path(_opts.segment_file_mark.rowset_path_prefix,
@@ -344,6 +386,13 @@ Status SegmentWriter::finalize_columns(uint64_t* index_size) {
     _column_writers.clear();
     _column_indexes.clear();
 
+    if (_spatial_vector_writer) {
+        uint64_t spatial_index_size = 0;
+        RETURN_IF_ERROR(_spatial_vector_writer->finish(&spatial_index_size));
+        *index_size += spatial_index_size;
+        _spatial_vector_writer.reset();
+    }
+
     if (_has_key) {
         uint64_t index_offset = _wfile->size();
         RETURN_IF_ERROR(_write_short_key_index());
@@ -410,6 +459,41 @@ Status SegmentWriter::append_chunk(const Chunk& chunk) {
     for (size_t i = 0; i < chunk_num_columns; ++i) {
         const Column* col = chunk.get_column_by_index(i).get();
         RETURN_IF_ERROR(_column_writers[i]->append(*col));
+    }
+
+    // Feed spatial-partitioned vector writer with vector + lat/lng columns
+    if (_spatial_vector_writer && _spatial_vector_col_writer_idx >= 0 &&
+        static_cast<size_t>(_spatial_vector_col_writer_idx) < chunk_num_columns &&
+        static_cast<size_t>(_spatial_lat_col_writer_idx) < chunk_num_columns &&
+        static_cast<size_t>(_spatial_lng_col_writer_idx) < chunk_num_columns) {
+        const Column* vec_col = chunk.get_column_by_index(_spatial_vector_col_writer_idx).get();
+        const Column* lat_col_raw = chunk.get_column_by_index(_spatial_lat_col_writer_idx).get();
+        const Column* lng_col_raw = chunk.get_column_by_index(_spatial_lng_col_writer_idx).get();
+
+        const double* lat_data = nullptr;
+        const double* lng_data = nullptr;
+        if (lat_col_raw->is_nullable()) {
+            lat_data = down_cast<const FixedLengthColumn<double>*>(
+                               down_cast<const NullableColumn*>(lat_col_raw)->data_column().get())
+                               ->get_data()
+                               .data();
+        } else {
+            lat_data = down_cast<const FixedLengthColumn<double>*>(lat_col_raw)->get_data().data();
+        }
+        if (lng_col_raw->is_nullable()) {
+            lng_data = down_cast<const FixedLengthColumn<double>*>(
+                               down_cast<const NullableColumn*>(lng_col_raw)->data_column().get())
+                               ->get_data()
+                               .data();
+        } else {
+            lng_data = down_cast<const FixedLengthColumn<double>*>(lng_col_raw)->get_data().data();
+        }
+
+        std::vector<uint64_t> cell_ids(chunk_num_rows);
+        for (size_t j = 0; j < chunk_num_rows; j++) {
+            cell_ids[j] = s2_cell_id_from_latlng(lat_data[j], lng_data[j], _spatial_s2_level);
+        }
+        RETURN_IF_ERROR(_spatial_vector_writer->append(*vec_col, cell_ids));
     }
 
     // TODO(cbl): put the fill full row column logic here is a bit hacky, this segment writer is used in many other
