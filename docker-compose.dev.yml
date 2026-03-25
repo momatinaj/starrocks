@@ -61,6 +61,16 @@ services:
     container_name: starrocks-test-be-vector
     command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "VectorIndexSearchTest.*" --without-java-ext -j ${PARALLEL:-28}'
 
+  test-be-geo:
+    <<: *dev-base
+    container_name: starrocks-test-be-geo
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*" --without-java-ext -j ${PARALLEL:-28}'
+
+  test-be-spatial-vector:
+    <<: *dev-base
+    container_name: starrocks-test-be-spatial-vector
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*" --without-java-ext -j ${PARALLEL:-28}'
+
 networks:
   starrocks-dev:
     driver: bridge
