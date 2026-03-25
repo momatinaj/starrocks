@@ -1,89 +1,66 @@
-version: '3.8'
+x-dev-base: &dev-base
+  image: starrocks/dev-env-ubuntu:latest
+  volumes:
+    - .:/workspace
+    - /tmp/.m2:/tmp/.m2
+    - /tmp/.ccache:/tmp/.ccache
+  working_dir: /workspace
+  environment:
+    - STARROCKS_HOME=/workspace
+    - STARROCKS_THIRDPARTY=/var/local/thirdparty
+    - HOME=/tmp
+    - CCACHE_DIR=/tmp/.ccache
+    - CCACHE_MAXSIZE=20G
+    - BUILD_TYPE=DEBUG
+    - MAVEN_OPTS=-Dmaven.repo.local=/tmp/.m2/repository -Duser.home=/tmp
+    - UDF_RUNTIME_DIR=/workspace
+    - LD_LIBRARY_PATH=/lib/jvm/java-17-openjdk/lib/server:/var/local/thirdparty/installed/jemalloc/lib-shared:/opt/gcc-toolset-14/lib64
+    - STARROCKS_GCC_HOME=/opt/gcc-toolset-14
+    - http_proxy=${http_proxy}
+    - https_proxy=${https_proxy}
+  user: root
+  tty: true
+  privileged: true
 
 services:
-
   dev:
-    image: starrocks/dev-env-ubuntu:latest
-    container_name: sr-dev
-    volumes:
-      - .:/workspace
-      - ./cache/m2:/tmp/.m2
-      - ./cache/ccache:/tmp/.ccache
-    working_dir: /workspace
-    environment:
-      STARROCKS_HOME: /workspace
-      STARROCKS_THIRDPARTY: /var/local/thirdparty
-      HOME: /tmp
-      CCACHE_DIR: /tmp/.ccache
-      CCACHE_MAXSIZE: 20G
-      BUILD_TYPE: DEBUG
+    <<: *dev-base
+    container_name: starrocks-dev-env
     stdin_open: true
-    tty: true
     command: /bin/bash
+    networks:
+      - starrocks-dev
 
   gensrc:
-    image: starrocks/dev-env-ubuntu:latest
-    container_name: sr-gensrc
-    volumes:
-      - .:/workspace
-      - ./cache/ccache:/tmp/.ccache
-    working_dir: /workspace
-    environment:
-      STARROCKS_HOME: /workspace
-      STARROCKS_THIRDPARTY: /var/local/thirdparty
-    tty: true
-    command: bash -c "cd gensrc && make -j${PARALLEL:-8}"
+    <<: *dev-base
+    container_name: starrocks-gensrc
+    command: bash -c 'cd gensrc && make -j${PARALLEL:-28}'
 
-  test-be-vector:
-    image: starrocks/dev-env-ubuntu:latest
-    container_name: sr-test-be-vector
-    volumes:
-      - .:/workspace
-      - ./cache/m2:/tmp/.m2
-      - ./cache/ccache:/tmp/.ccache
-    working_dir: /workspace
-    environment:
-      STARROCKS_HOME: /workspace
-      STARROCKS_THIRDPARTY: /var/local/thirdparty
-      HOME: /tmp
-      CCACHE_DIR: /tmp/.ccache
-      CCACHE_MAXSIZE: 20G
-      BUILD_TYPE: DEBUG
-    tty: true
-    command: bash -c "./run-be-ut.sh --gtest_filter 'VectorIndexSearchTest.*' --without-java-ext -j ${PARALLEL:-28}"
+  build-fe:
+    <<: *dev-base
+    container_name: starrocks-build-fe
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./build.sh --fe -j ${PARALLEL:-28}'
 
   build-be:
-    image: starrocks/dev-env-ubuntu:latest
-    container_name: sr-build-be
-    volumes:
-      - .:/workspace
-      - ./cache/m2:/tmp/.m2
-      - ./cache/ccache:/tmp/.ccache
-    working_dir: /workspace
-    environment:
-      STARROCKS_HOME: /workspace
-      STARROCKS_THIRDPARTY: /var/local/thirdparty
-      HOME: /tmp
-      CCACHE_DIR: /tmp/.ccache
-      CCACHE_MAXSIZE: 20G
-      BUILD_TYPE: DEBUG
-    tty: true
-    command: bash -c "./build.sh --be -j ${PARALLEL:-28}"
+    <<: *dev-base
+    container_name: starrocks-build-be
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./build.sh --be -j ${PARALLEL:-28}'
 
   test-fe:
-    image: starrocks/dev-env-ubuntu:latest
-    container_name: sr-test-fe
-    volumes:
-      - .:/workspace
-      - ./cache/m2:/tmp/.m2
-      - ./cache/ccache:/tmp/.ccache
-    working_dir: /workspace
-    environment:
-      STARROCKS_HOME: /workspace
-      STARROCKS_THIRDPARTY: /var/local/thirdparty
-      HOME: /tmp
-      CCACHE_DIR: /tmp/.ccache
-      MAVEN_OPTS: -Dmaven.repo.local=/tmp/.m2/repository
-      BUILD_TYPE: DEBUG
-    tty: true
-    command: bash -c "./run-fe-ut.sh -j ${PARALLEL:-28}"
+    <<: *dev-base
+    container_name: starrocks-test-fe
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-fe-ut.sh -j ${PARALLEL:-28}'
+
+  test-be:
+    <<: *dev-base
+    container_name: starrocks-test-be
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --without-java-ext -j ${PARALLEL:-28}'
+
+  test-be-vector:
+    <<: *dev-base
+    container_name: starrocks-test-be-vector
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "VectorIndexSearchTest.*" --without-java-ext -j ${PARALLEL:-28}'
+
+networks:
+  starrocks-dev:
+    driver: bridge
