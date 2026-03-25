@@ -71,10 +71,15 @@ services:
     container_name: starrocks-test-be-partition-meta
     command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "SpatialPartitionMetaTest.*" --without-java-ext -j ${PARALLEL:-28}'
 
+  test-be-spatial-writer:
+    <<: *dev-base
+    container_name: starrocks-test-be-spatial-writer
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "SpatialVectorIndexWriterTest.*" --without-java-ext -j ${PARALLEL:-28}'
+
   test-be-spatial-vector:
     <<: *dev-base
     container_name: starrocks-test-be-spatial-vector
-    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*" --without-java-ext -j ${PARALLEL:-28}'
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*:SpatialVectorIndexWriterTest.*" --without-java-ext -j ${PARALLEL:-28}'
 
 networks:
   starrocks-dev:

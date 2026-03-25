@@ -66,6 +66,14 @@ public:
         return fmt::format("{}/{}_{}_{}.{}", rowset_dir, rowset_id, segment_id, index_id, "vi_manifest");
     }
 
+    // Per-partition row-ID map: maps partition-local row IDs (0..N-1) back to
+    // segment-local row IDs. Written as raw uint32 array.
+    static std::string partition_rowid_map_file_path(const std::string& rowset_dir, const std::string& rowset_id,
+                                                     int segment_id, int64_t index_id,
+                                                     const std::string& cell_token) {
+        return fmt::format("{}/{}_{}_{}.{}.{}", rowset_dir, rowset_id, segment_id, index_id, cell_token, "vi_rowids");
+    }
+
     static const std::string get_temporary_null_bitmap_file_name() { return "null_bitmap"; }
 };
 
