@@ -18,6 +18,8 @@ x-dev-base: &dev-base
     - STARROCKS_GCC_HOME=/opt/gcc-toolset-14
     - http_proxy=${http_proxy}
     - https_proxy=${https_proxy}
+    - no_proxy=starrocks-custom-fe,starrocks-custom-be,starrocks-baseline,localhost,127.0.0.1,172.16.0.0/12
+    - NO_PROXY=starrocks-custom-fe,starrocks-custom-be,starrocks-baseline,localhost,127.0.0.1,172.16.0.0/12
   user: root
   tty: true
   privileged: true
