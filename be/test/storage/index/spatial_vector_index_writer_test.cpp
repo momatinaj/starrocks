@@ -196,7 +196,7 @@ TEST_F(SpatialVectorIndexWriterTest, test_tiny_partition_skips_hnsw) {
     ASSERT_TRUE(writer.finish(&index_size).ok());
 
     auto manifest_path = IndexDescriptor::partition_manifest_file_path(_test_dir, kRowsetId, kSegmentId, 42);
-    auto manifest = SpatialPartitionManifest::deserialize(*read_file_bytes(manifest_path).value());
+    auto manifest = SpatialPartitionManifest::deserialize(read_file_bytes(manifest_path).value());
     ASSERT_TRUE(manifest.ok());
     EXPECT_EQ(manifest->partition_count(), 1);
     EXPECT_FALSE(manifest->partitions()[0].has_hnsw);
@@ -229,7 +229,7 @@ TEST_F(SpatialVectorIndexWriterTest, test_mixed_hnsw_and_tiny) {
     ASSERT_TRUE(writer.finish(&index_size).ok());
 
     auto manifest_path = IndexDescriptor::partition_manifest_file_path(_test_dir, kRowsetId, kSegmentId, 42);
-    auto manifest = SpatialPartitionManifest::deserialize(*read_file_bytes(manifest_path).value());
+    auto manifest = SpatialPartitionManifest::deserialize(read_file_bytes(manifest_path).value());
     ASSERT_TRUE(manifest.ok());
     EXPECT_EQ(manifest->partition_count(), 2);
 
@@ -295,7 +295,7 @@ TEST_F(SpatialVectorIndexWriterTest, test_multiple_appends) {
     ASSERT_TRUE(writer.finish(nullptr).ok());
 
     auto manifest_path = IndexDescriptor::partition_manifest_file_path(_test_dir, kRowsetId, kSegmentId, 42);
-    auto manifest = SpatialPartitionManifest::deserialize(*read_file_bytes(manifest_path).value());
+    auto manifest = SpatialPartitionManifest::deserialize(read_file_bytes(manifest_path).value());
     ASSERT_TRUE(manifest.ok());
     EXPECT_EQ(manifest->partitions()[0].row_count, 7);
 
@@ -359,7 +359,7 @@ TEST_F(SpatialVectorIndexWriterTest, test_manifest_s2_level_propagated) {
     ASSERT_TRUE(writer.finish(nullptr).ok());
 
     auto manifest_path = IndexDescriptor::partition_manifest_file_path(_test_dir, kRowsetId, kSegmentId, 42);
-    auto manifest = SpatialPartitionManifest::deserialize(*read_file_bytes(manifest_path).value());
+    auto manifest = SpatialPartitionManifest::deserialize(read_file_bytes(manifest_path).value());
     ASSERT_TRUE(manifest.ok());
     EXPECT_EQ(manifest->s2_level(), level);
     EXPECT_EQ(manifest->spatial_lat_column_uid(), 5);
