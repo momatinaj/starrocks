@@ -138,16 +138,18 @@ services:
           echo "ERROR: BE has not been built yet. Run 'docker compose run --rm build-be' first."
           exit 1
         fi
-        if ! command -v mysql &>/dev/null; then
-          apt-get update -qq && apt-get install -y -qq mariadb-client >/dev/null 2>&1
-        fi
-        echo "Waiting for FE to accept connections..."
-        until mysql -h starrocks-custom-fe -P 9030 -u root --connect-timeout=3 -e "SELECT 1" >/dev/null 2>&1; do
+        echo "Waiting for FE HTTP to be ready..."
+        until curl -sf http://starrocks-custom-fe:8030/api/health >/dev/null 2>&1; do
           sleep 3
         done
         echo "FE is ready. Registering BE..."
-        mysql -h starrocks-custom-fe -P 9030 -u root -e \
-          "ALTER SYSTEM ADD BACKEND 'starrocks-custom-be:9050';" 2>/dev/null || true
+        curl -s -u root: -XPOST \
+          'http://starrocks-custom-fe:8030/api/v1/catalogs/default_catalog/databases/information_schema/sql' \
+          -H 'Content-Type: application/json' \
+          -d '{"query":"ALTER SYSTEM ADD BACKEND '"'"'starrocks-custom-be:9050'"'"'"}' \
+          2>/dev/null || true
+        echo ""
+        echo "BE registered. Starting backend..."
         mkdir -p $$STARROCKS_HOME/storage $$STARROCKS_HOME/log
         exec $$STARROCKS_HOME/bin/start_be.sh --logconsole
 
