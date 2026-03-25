@@ -146,18 +146,21 @@ services:
           echo "ERROR: BE has not been built yet. Run 'docker compose run --rm build-be' first."
           exit 1
         fi
-        echo "Waiting for FE HTTP to be ready..."
-        until curl -sf http://starrocks-custom-fe:8030/api/health >/dev/null 2>&1; do
+        echo "Waiting for FE query port (9030) to be ready..."
+        until python3 -c "import socket; s=socket.create_connection(('starrocks-custom-fe',9030),3); s.close()" 2>/dev/null; do
           sleep 3
         done
-        echo "FE is ready. Registering BE..."
-        curl -s -u root: -XPOST \
-          'http://starrocks-custom-fe:8030/api/v1/catalogs/default_catalog/databases/information_schema/sql' \
-          -H 'Content-Type: application/json' \
-          -d '{"query":"ALTER SYSTEM ADD BACKEND '"'"'starrocks-custom-be:9050'"'"'"}' \
-          2>/dev/null || true
-        echo ""
-        echo ""
+        sleep 5
+        echo "FE is ready. Registering BE via HTTP SQL API..."
+        for i in 1 2 3; do
+          RESP=$$(curl -s -u root: -XPOST \
+            'http://starrocks-custom-fe:8030/api/v1/catalogs/default_catalog/databases/information_schema/sql' \
+            -H 'Content-Type: application/json' \
+            -d '{"query":"ALTER SYSTEM ADD BACKEND '"'"'starrocks-custom-be:9050'"'"'"}' 2>&1)
+          echo "Registration attempt $$i: $$RESP"
+          echo "$$RESP" | grep -q '"status":"OK"\|already exists' && break
+          sleep 5
+        done
         echo "BE registered. Starting backend..."
         mkdir -p $$STARROCKS_HOME/storage $$STARROCKS_HOME/log
         # Set priority_networks so BE binds to the Docker bridge IP
