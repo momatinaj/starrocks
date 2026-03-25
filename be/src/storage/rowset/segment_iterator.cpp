@@ -43,7 +43,10 @@
 #include "storage/index/vector/tenann/tenann_index_utils.h"
 #include "storage/index/vector/vector_index_reader.h"
 #include "storage/index/vector/vector_index_reader_factory.h"
+#include "storage/index/vector/spatial_partition_meta.h"
+#include "storage/index/vector/spatial_vector_index_reader.h"
 #include "storage/index/vector/vector_search_option.h"
+#include "geo/s2_cell_utils.h"
 #include "storage/lake/update_manager.h"
 #include "storage/projection_iterator.h"
 #include "storage/range.h"
@@ -205,9 +208,14 @@ private:
 
         std::shared_ptr<VectorIndexReader> ann_reader;
 
+        // Spatial-partitioned reader (mutually exclusive with ann_reader)
+        std::unique_ptr<SpatialVectorIndexReader> spatial_reader;
+        std::vector<uint64_t> query_cell_ids; // S2 covering for spatial predicate
+
         // Helper method to check if rowid should always be built
         bool always_build_rowid() const { return use_vector_index && !use_ivfpq; }
         bool use_vector_fallback() const { return !fallback_mode.empty(); }
+        bool use_spatial_partitioned() const { return spatial_reader && spatial_reader->is_valid(); }
     };
 
     // Inverted index related context, only created when needed
@@ -725,6 +733,32 @@ Status SegmentIterator::_init_ann_reader() {
 
     auto tablet_index_meta = std::make_shared<TabletIndex>(hit_indexes[0]);
 
+    // Check if this is a spatial-partitioned vector index
+    const auto& idx_props = tablet_index_meta->index_properties();
+    auto sp_it = idx_props.find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
+    if (sp_it != idx_props.end() && sp_it->second == "true") {
+        std::string manifest_path = IndexDescriptor::partition_manifest_file_path(
+                _opts.rowset_path, _opts.rowsetid.to_string(), segment_id(), tablet_index_meta->index_id());
+        if (fs::path_exist(manifest_path)) {
+            _vector_index_ctx->spatial_reader = std::make_unique<SpatialVectorIndexReader>();
+            RETURN_IF_ERROR(_vector_index_ctx->spatial_reader->init(
+                    _opts.rowset_path, _opts.rowsetid.to_string(), segment_id(), tablet_index_meta->index_id(),
+                    tablet_index_meta, _vector_index_ctx->query_params));
+
+            if (_vector_index_ctx->spatial_reader->is_valid()) {
+                int s2_level = _vector_index_ctx->spatial_reader->manifest().s2_level();
+                // Compute query cell IDs: search ALL partitions for MVP
+                // (spatial predicate filtering can be added later)
+                const auto& partitions = _vector_index_ctx->spatial_reader->manifest().partitions();
+                for (const auto& p : partitions) {
+                    _vector_index_ctx->query_cell_ids.push_back(p.cell_id);
+                }
+                return Status::OK();
+            }
+            _vector_index_ctx->spatial_reader.reset();
+        }
+    }
+
     std::string index_path = IndexDescriptor::vector_index_file_path(_opts.rowset_path, _opts.rowsetid.to_string(),
                                                                      segment_id(), tablet_index_meta->index_id());
 
@@ -752,7 +786,13 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
 
     {
         SCOPED_RAW_TIMER(&_opts.stats->vector_search_timer);
-        if (_vector_index_ctx->vector_range >= 0) {
+
+        if (_vector_index_ctx->use_spatial_partitioned()) {
+            // Spatial-partitioned search: search matching partitions and merge
+            st = _vector_index_ctx->spatial_reader->search(
+                    _vector_index_ctx->query_cell_ids, _vector_index_ctx->query_view, _vector_index_ctx->k,
+                    &result_ids, &result_distances);
+        } else if (_vector_index_ctx->vector_range >= 0) {
             st = _vector_index_ctx->ann_reader->range_search(
                     _vector_index_ctx->query_view, _vector_index_ctx->k, &result_ids, &result_distances, &del_id_filter,
                     static_cast<float>(_vector_index_ctx->vector_range), _vector_index_ctx->result_order);
