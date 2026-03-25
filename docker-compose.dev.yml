@@ -76,10 +76,15 @@ services:
     container_name: starrocks-test-be-spatial-writer
     command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "SpatialVectorIndexWriterTest.*" --without-java-ext -j ${PARALLEL:-28}'
 
+  test-be-spatial-reader:
+    <<: *dev-base
+    container_name: starrocks-test-be-spatial-reader
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "SpatialVectorIndexReader*" --without-java-ext -j ${PARALLEL:-28}'
+
   test-be-spatial-vector:
     <<: *dev-base
     container_name: starrocks-test-be-spatial-vector
-    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*:SpatialVectorIndexWriterTest.*" --without-java-ext -j ${PARALLEL:-28}'
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*:SpatialVectorIndexWriterTest.*:SpatialVectorIndexReader*" --without-java-ext -j ${PARALLEL:-28}'
 
 networks:
   starrocks-dev:
