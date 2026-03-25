@@ -86,6 +86,73 @@ services:
     container_name: starrocks-test-be-spatial-vector
     command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*:SpatialVectorIndexWriterTest.*:SpatialVectorIndexReader*" --without-java-ext -j ${PARALLEL:-28}'
 
+  # ---- Benchmark: Official StarRocks baseline (A0) ----
+  starrocks-baseline:
+    image: starrocks/allin1-ubuntu:latest
+    container_name: starrocks-baseline
+    ports:
+      - "19030:9030"
+      - "18030:8030"
+      - "18040:8040"
+    tty: true
+    networks:
+      - starrocks-bench
+
+  # ---- Benchmark: Custom-built FE (B2 / A2) ----
+  starrocks-custom-fe:
+    <<: *dev-base
+    container_name: starrocks-custom-fe
+    ports:
+      - "9030:9030"
+      - "8030:8030"
+    networks:
+      - starrocks-bench
+    command:
+      - bash
+      - -lc
+      - |
+        export STARROCKS_HOME=/workspace/output/fe
+        if [ ! -d "$$STARROCKS_HOME/lib" ]; then
+          echo "ERROR: FE has not been built yet. Run 'docker compose run --rm build-fe' first."
+          exit 1
+        fi
+        mkdir -p $$STARROCKS_HOME/meta $$STARROCKS_HOME/log
+        exec $$STARROCKS_HOME/bin/start_fe.sh --logconsole
+
+  # ---- Benchmark: Custom-built BE (B2 / A2) ----
+  starrocks-custom-be:
+    <<: *dev-base
+    container_name: starrocks-custom-be
+    ports:
+      - "8040:8040"
+    depends_on:
+      - starrocks-custom-fe
+    networks:
+      - starrocks-bench
+    command:
+      - bash
+      - -lc
+      - |
+        export STARROCKS_HOME=/workspace/output/be
+        if [ ! -f "$$STARROCKS_HOME/lib/starrocks_be" ]; then
+          echo "ERROR: BE has not been built yet. Run 'docker compose run --rm build-be' first."
+          exit 1
+        fi
+        if ! command -v mysql &>/dev/null; then
+          apt-get update -qq && apt-get install -y -qq mariadb-client >/dev/null 2>&1
+        fi
+        echo "Waiting for FE to accept connections..."
+        until mysql -h starrocks-custom-fe -P 9030 -u root --connect-timeout=3 -e "SELECT 1" >/dev/null 2>&1; do
+          sleep 3
+        done
+        echo "FE is ready. Registering BE..."
+        mysql -h starrocks-custom-fe -P 9030 -u root -e \
+          "ALTER SYSTEM ADD BACKEND 'starrocks-custom-be:9050';" 2>/dev/null || true
+        mkdir -p $$STARROCKS_HOME/storage $$STARROCKS_HOME/log
+        exec $$STARROCKS_HOME/bin/start_be.sh --logconsole
+
 networks:
   starrocks-dev:
+    driver: bridge
+  starrocks-bench:
     driver: bridge
