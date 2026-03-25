@@ -193,6 +193,7 @@ TEST_F(VectorIndexSearchTest, test_fallback_query_param_does_not_enable_ann) {
     ASSERT_EQ(option.query_params[VectorSearchOption::kFallbackModeKey], "SPATIAL_FILTER_EXACT");
 }
 
+#ifdef WITH_TENANN
 TEST_F(VectorIndexSearchTest, test_get_vector_meta_ignores_fallback_query_param) {
     auto tablet_index = prepare_tablet_index();
     tablet_index->add_common_properties("index_type", "hnsw");
@@ -211,5 +212,6 @@ TEST_F(VectorIndexSearchTest, test_get_vector_meta_ignores_fallback_query_param)
     ASSERT_TRUE(status.ok());
     ASSERT_NE(status.value(), nullptr);
 }
+#endif
 
 } // namespace starrocks
