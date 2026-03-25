@@ -52,6 +52,20 @@ public:
         return fmt::format("{}/{}_{}_{}.{}", rowset_dir, rowset_id, segment_id, index_id, "vi");
     }
 
+    // Per-partition .vi file path for spatially-partitioned vector indexes.
+    // cell_token is the S2 cell token (e.g. "89c25c") from s2_cell_id_to_token().
+    static std::string partitioned_vector_index_file_path(const std::string& rowset_dir, const std::string& rowset_id,
+                                                          int segment_id, int64_t index_id,
+                                                          const std::string& cell_token) {
+        return fmt::format("{}/{}_{}_{}.{}.{}", rowset_dir, rowset_id, segment_id, index_id, cell_token, "vi");
+    }
+
+    // Manifest file listing all spatial partitions for one (segment, index_id).
+    static std::string partition_manifest_file_path(const std::string& rowset_dir, const std::string& rowset_id,
+                                                    int segment_id, int64_t index_id) {
+        return fmt::format("{}/{}_{}_{}.{}", rowset_dir, rowset_id, segment_id, index_id, "vi_manifest");
+    }
+
     static const std::string get_temporary_null_bitmap_file_name() { return "null_bitmap"; }
 };
 

@@ -364,6 +364,7 @@ set(EXEC_FILES
         ./storage/rowset/page_handle_test.cpp
         ./storage/index/vector_index_test.cpp
         ./storage/index/vector_search_test.cpp
+        ./storage/index/spatial_partition_meta_test.cpp
         ./storage/snapshot_meta_test.cpp
         ./storage/short_key_index_test.cpp
         ./storage/storage_types_test.cpp
