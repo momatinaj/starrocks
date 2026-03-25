@@ -1,59 +1,89 @@
 version: '3.8'
 
-x-dev-base: &dev-base
-  image: ${STARROCKS_DEV_ENV_IMAGE:-starrocks/dev-env-ubuntu:latest}
-  volumes:
-    - .:/workspace
-    - ./cache/m2:/tmp/.m2
-    - ./cache/ccache:/tmp/.ccache
-  working_dir: /workspace
-  environment:
-    STARROCKS_HOME: /workspace
-    STARROCKS_THIRDPARTY: /var/local/thirdparty
-    HOME: /tmp
-    CCACHE_DIR: /tmp/.ccache
-    CCACHE_MAXSIZE: ${CCACHE_MAXSIZE:-20G}
-    BUILD_TYPE: ${BUILD_TYPE:-DEBUG}
-    MAVEN_OPTS: "-Dmaven.repo.local=/tmp/.m2/repository"
-
 services:
+
   dev:
-    <<: *dev-base
+    image: starrocks/dev-env-ubuntu:latest
     container_name: sr-dev
+    volumes:
+      - .:/workspace
+      - ./cache/m2:/tmp/.m2
+      - ./cache/ccache:/tmp/.ccache
+    working_dir: /workspace
+    environment:
+      STARROCKS_HOME: /workspace
+      STARROCKS_THIRDPARTY: /var/local/thirdparty
+      HOME: /tmp
+      CCACHE_DIR: /tmp/.ccache
+      CCACHE_MAXSIZE: 20G
+      BUILD_TYPE: DEBUG
     stdin_open: true
     tty: true
     command: /bin/bash
 
   gensrc:
-    <<: *dev-base
+    image: starrocks/dev-env-ubuntu:latest
     container_name: sr-gensrc
-    command: bash -c 'cd gensrc && make -j${PARALLEL:-8}'
-
-  build-fe:
-    <<: *dev-base
-    container_name: sr-build-fe
-    command: ./build.sh --fe -j ${PARALLEL:-8}
-
-  build-be:
-    <<: *dev-base
-    container_name: sr-build-be
-    command: ./build.sh --be --without-java-ext -j ${PARALLEL:-8}
-
-  test-fe:
-    <<: *dev-base
-    container_name: sr-test-fe
-    command: ./run-fe-ut.sh -j ${PARALLEL:-8}
-
-  test-be:
-    <<: *dev-base
-    container_name: sr-test-be
-    command: ./run-be-ut.sh --without-java-ext -j ${PARALLEL:-8}
+    volumes:
+      - .:/workspace
+      - ./cache/ccache:/tmp/.ccache
+    working_dir: /workspace
+    environment:
+      STARROCKS_HOME: /workspace
+      STARROCKS_THIRDPARTY: /var/local/thirdparty
+    tty: true
+    command: bash -c "cd gensrc && make -j${PARALLEL:-8}"
 
   test-be-vector:
-    <<: *dev-base
-    container_name: sr-test-vector
-    command: >
-      ./run-be-ut.sh
-        --gtest_filter "VectorIndexSearchTest.*"
-        --without-java-ext
-        -j ${PARALLEL:-8}
+    image: starrocks/dev-env-ubuntu:latest
+    container_name: sr-test-be-vector
+    volumes:
+      - .:/workspace
+      - ./cache/m2:/tmp/.m2
+      - ./cache/ccache:/tmp/.ccache
+    working_dir: /workspace
+    environment:
+      STARROCKS_HOME: /workspace
+      STARROCKS_THIRDPARTY: /var/local/thirdparty
+      HOME: /tmp
+      CCACHE_DIR: /tmp/.ccache
+      CCACHE_MAXSIZE: 20G
+      BUILD_TYPE: DEBUG
+    tty: true
+    command: bash -c "./run-be-ut.sh --gtest_filter 'VectorIndexSearchTest.*' --without-java-ext -j ${PARALLEL:-28}"
+
+  build-be:
+    image: starrocks/dev-env-ubuntu:latest
+    container_name: sr-build-be
+    volumes:
+      - .:/workspace
+      - ./cache/m2:/tmp/.m2
+      - ./cache/ccache:/tmp/.ccache
+    working_dir: /workspace
+    environment:
+      STARROCKS_HOME: /workspace
+      STARROCKS_THIRDPARTY: /var/local/thirdparty
+      HOME: /tmp
+      CCACHE_DIR: /tmp/.ccache
+      CCACHE_MAXSIZE: 20G
+      BUILD_TYPE: DEBUG
+    tty: true
+    command: bash -c "./build.sh --be -j ${PARALLEL:-28}"
+
+  test-fe:
+    image: starrocks/dev-env-ubuntu:latest
+    container_name: sr-test-fe
+    volumes:
+      - .:/workspace
+      - ./cache/m2:/tmp/.m2
+      - ./cache/ccache:/tmp/.ccache
+    working_dir: /workspace
+    environment:
+      STARROCKS_HOME: /workspace
+      STARROCKS_THIRDPARTY: /var/local/thirdparty
+      HOME: /tmp
+      CCACHE_DIR: /tmp/.ccache
+      MAVEN_OPTS: -Dmaven.repo.local=/tmp/.m2/repository
+      BUILD_TYPE: DEBUG
+    tty: true
+    command: bash -c "./run-fe-ut.sh -j ${PARALLEL:-28}"
