@@ -14,8 +14,11 @@
 
 #include "storage/index/vector/spatial_partition_meta.h"
 
+#include <fmt/format.h>
+
 #include <cstring>
 
+#include "common/statusor.h"
 #include "geo/s2_cell_utils.h"
 
 namespace starrocks {
