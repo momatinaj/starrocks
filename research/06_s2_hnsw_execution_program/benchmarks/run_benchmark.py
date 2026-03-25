@@ -385,6 +385,10 @@ def main():
     execute(conn, f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
     execute(conn, f"USE {DB_NAME}")
 
+    if args.mode in ("b2", "a0"):
+        print("  Enabling vector index feature...")
+        execute(conn, "ADMIN SET FRONTEND CONFIG (\"enable_experimental_vector\" = \"true\")")
+
     if not args.skip_load:
         # Generate data
         print("[1/4] Generating synthetic data...")

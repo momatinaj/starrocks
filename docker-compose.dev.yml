@@ -127,6 +127,8 @@ services:
         echo "Detected IP=$$MY_IP, setting priority_networks=$$SUBNET"
         sed -i '/^priority_networks/d' $$STARROCKS_HOME/conf/fe.conf
         echo "priority_networks = $$SUBNET" >> $$STARROCKS_HOME/conf/fe.conf
+        sed -i '/^enable_experimental_vector/d' $$STARROCKS_HOME/conf/fe.conf
+        echo "enable_experimental_vector = true" >> $$STARROCKS_HOME/conf/fe.conf
         exec $$STARROCKS_HOME/bin/start_fe.sh --logconsole
 
   # ---- Benchmark: Custom-built BE (B2 / A2) ----
