@@ -218,7 +218,7 @@ def build_radius_query(tbl, center_lat, center_lng, radius_m, query_vec, k):
 SELECT id,
        approx_l2_distance(embedding, {vec_to_sql(query_vec)}) AS dist
 FROM {tbl}
-WHERE ST_Distance_Sphere(ST_Point(lng, lat), ST_Point({center_lng}, {center_lat})) < {radius_m}
+WHERE ST_Distance_Sphere(lng, lat, {center_lng}, {center_lat}) < {radius_m}
 ORDER BY dist
 LIMIT {k}
 """
