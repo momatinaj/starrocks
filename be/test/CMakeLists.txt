@@ -250,6 +250,7 @@ set(EXEC_FILES
         ./formats/parquet/dict_encoding_test.cpp
         ./formats/disk_range_test.cpp
         ./geo/geo_types_test.cpp
+        ./geo/s2_cell_utils_test.cpp
         ./geo/wkt_parse_test.cpp
         ./http/default_path_handlers_test.cpp
         ./http/http_client_test.cpp
