@@ -243,7 +243,7 @@ TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_zero_radius) {
 
     SpatialRadiusEvaluator eval;
     ASSERT_TRUE(eval.init(spec, lats, lngs).ok());
-    ASSERT_TRUE(eval.evaluate(0)); // exact center, dist=0, 0 <= 0
+    ASSERT_FALSE(eval.evaluate(0)); // strict less-than: 0 < 0 is false
 }
 
 TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_empty_data) {
