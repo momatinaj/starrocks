@@ -108,6 +108,18 @@ public class VectorIndexTest extends PlanTestBase {
                 + "DUPLICATE KEY(c0) "
                 + "DISTRIBUTED BY HASH(c0) BUCKETS 1 "
                 + "PROPERTIES ('replication_num'='1');");
+
+        starRocksAssert.withTable("CREATE TABLE test.test_acorn_l2 ("
+                + " c0 INT,"
+                + " lng DOUBLE,"
+                + " lat DOUBLE,"
+                + " c1 array<float> NOT NULL,"
+                + " INDEX index_vector1 (c1) USING VECTOR ('metric_type' = 'l2_distance', "
+                + "'is_vector_normed' = 'false', 'M' = '16', 'index_type' = 'acorn', 'dim'='5') "
+                + ") "
+                + "DUPLICATE KEY(c0) "
+                + "DISTRIBUTED BY HASH(c0) BUCKETS 1 "
+                + "PROPERTIES ('replication_num'='1');");
     }
 
     @Test
@@ -594,6 +606,26 @@ public class VectorIndexTest extends PlanTestBase {
                 "     table: test_ivfpq, rollup: test_ivfpq\n" +
                 "     VECTORINDEX: ON\n" +
                 "          IVFPQ: ON, Distance Column: <0:__vector_approx_l2_distance>, LimitK: 10, Order: ASC, Query Vector: [1.1, 2.2, 3.3, 4.4], Predicate Range: -1.0");
+    }
+
+    @Test
+    public void testAcornIndexDDL() throws Exception {
+        // ACORN table should accept vector queries just like HNSW
+        String sql = "select c1 from test_acorn_l2 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+    }
+
+    @Test
+    public void testAcornSpatialFallback() throws Exception {
+        String sql = "select c1 from test_acorn_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        // Until A5 planner integration, ACORN with spatial falls back just like HNSW
+        assertContains(plan, "VECTORINDEX: FALLBACK\n" +
+                "          Fallback Mode: SPATIAL_FILTER + EXACT_DISTANCE");
     }
 
     @Test

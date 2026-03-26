@@ -121,11 +121,15 @@ public class VectorIndexUtil {
             throw new SemanticException("The vector index type is unknown");
         }
 
+        // ACORN uses identical construction/search params to HNSW
+        VectorIndexType paramValidationType =
+                vectorIndexType == VectorIndexType.ACORN ? VectorIndexType.HNSW : vectorIndexType;
+
         // check whether index and search params define with wrong index type
-        configIndexParams.removeAll(Optional.ofNullable(indexParamsGroupByType.get(vectorIndexType))
+        configIndexParams.removeAll(Optional.ofNullable(indexParamsGroupByType.get(paramValidationType))
                 .orElse(Collections.emptySet()));
 
-        configSearchParams.removeAll(Optional.ofNullable(searchParamsGroupByType.get(vectorIndexType))
+        configSearchParams.removeAll(Optional.ofNullable(searchParamsGroupByType.get(paramValidationType))
                 .orElse(Collections.emptySet()));
 
         if (!configIndexParams.isEmpty()) {
@@ -154,7 +158,7 @@ public class VectorIndexUtil {
         }
 
         // add default properties
-        Set<String> indexParams = indexParamsGroupByType.get(vectorIndexType);
+        Set<String> indexParams = indexParamsGroupByType.get(paramValidationType);
         paramsNeedDefault.keySet().removeIf(key -> !indexParams.contains(key));
         if (!paramsNeedDefault.isEmpty()) {
             addDefaultProperties(properties, paramsNeedDefault);

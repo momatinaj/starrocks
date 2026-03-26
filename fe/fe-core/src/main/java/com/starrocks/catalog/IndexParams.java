@@ -45,7 +45,7 @@ public class IndexParams {
         // common
         register(builder, IndexType.VECTOR, IndexParamType.COMMON, VectorIndexParams.CommonIndexParamKey.INDEX_TYPE,
                 true, false, null,
-                "You should set `index_type` to IVFPQ/HNSW for a vector index.");
+                "You should set `index_type` to IVFPQ/HNSW/ACORN for a vector index.");
         register(builder, IndexType.VECTOR, IndexParamType.COMMON, VectorIndexParams.CommonIndexParamKey.DIM,
                 true, false, null,
                 "You should set `dim` to a numeric value for a vector index.");

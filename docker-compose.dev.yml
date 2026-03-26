@@ -88,6 +88,11 @@ services:
     container_name: starrocks-test-be-spatial-vector
     command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "S2CellUtilsTest.*:VectorIndexSearchTest.*:SpatialPartitionMetaTest.*:SpatialVectorIndexWriterTest.*:SpatialVectorIndexReader*" --without-java-ext -j ${PARALLEL:-28}'
 
+  test-be-acorn:
+    <<: *dev-base
+    container_name: starrocks-test-be-acorn
+    command: bash -lc 'git config --global --add safe.directory /workspace && ./run-be-ut.sh --gtest_filter "AcornIndexReaderTest.*:HNSWGraphAccessorTest.*:SearchPredicateEvaluatorTest.*:VectorIndexSearchTest.test_acorn*" --without-java-ext -j ${PARALLEL:-28}'
+
   # ---- Benchmark: Official StarRocks baseline (A0) ----
   starrocks-baseline:
     image: starrocks/allin1-ubuntu:latest

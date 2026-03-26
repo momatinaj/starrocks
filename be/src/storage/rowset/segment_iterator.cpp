@@ -45,6 +45,8 @@
 #include "storage/index/vector/vector_index_reader_factory.h"
 #include "storage/index/vector/spatial_partition_meta.h"
 #include "storage/index/vector/spatial_vector_index_reader.h"
+#include "storage/index/vector/acorn_index_reader.h"
+#include "storage/index/vector/search_predicate_evaluator.h"
 #include "storage/index/vector/vector_search_option.h"
 #include "geo/s2_cell_utils.h"
 #include "storage/lake/update_manager.h"
@@ -212,10 +214,14 @@ private:
         std::unique_ptr<SpatialVectorIndexReader> spatial_reader;
         std::vector<uint64_t> query_cell_ids; // S2 covering for spatial predicate
 
+        // ACORN-1 reader (mutually exclusive with ann_reader and spatial_reader)
+        std::unique_ptr<AcornIndexReader> acorn_reader;
+
         // Helper method to check if rowid should always be built
         bool always_build_rowid() const { return use_vector_index && !use_ivfpq; }
         bool use_vector_fallback() const { return !fallback_mode.empty(); }
         bool use_spatial_partitioned() const { return spatial_reader && spatial_reader->is_valid(); }
+        bool use_acorn() const { return acorn_reader && acorn_reader->is_valid(); }
     };
 
     // Inverted index related context, only created when needed
@@ -733,6 +739,31 @@ Status SegmentIterator::_init_ann_reader() {
 
     auto tablet_index_meta = std::make_shared<TabletIndex>(hit_indexes[0]);
 
+    // Check if this is an ACORN index type
+    const auto& common_props = tablet_index_meta->common_properties();
+    auto type_it = common_props.find("index_type");
+    if (type_it != common_props.end() && type_it->second == "acorn") {
+        std::string index_path = IndexDescriptor::vector_index_file_path(
+                _opts.rowset_path, _opts.rowsetid.to_string(), segment_id(), tablet_index_meta->index_id());
+        if (fs::path_exist(index_path)) {
+            _vector_index_ctx->acorn_reader = std::make_unique<AcornIndexReader>();
+            auto st = _vector_index_ctx->acorn_reader->init(index_path);
+            if (st.ok() && _vector_index_ctx->acorn_reader->is_valid()) {
+                // Parse ACORN predicate spec from query params
+                auto pred_spec = AcornPredicateSpec::from_query_params(_vector_index_ctx->query_params);
+                if (pred_spec.type != AcornPredicateSpec::NONE) {
+                    auto evaluator = create_predicate_evaluator(pred_spec);
+                    if (evaluator) {
+                        _vector_index_ctx->acorn_reader->set_predicate_evaluator(std::move(evaluator));
+                    }
+                }
+                return Status::OK();
+            }
+            _vector_index_ctx->acorn_reader.reset();
+        }
+        // Fall through to standard TenANN reader if ACORN init fails
+    }
+
     // Check if this is a spatial-partitioned vector index
     const auto& idx_props = tablet_index_meta->index_properties();
     auto sp_it = idx_props.find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
@@ -787,7 +818,19 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
     {
         SCOPED_RAW_TIMER(&_opts.stats->vector_search_timer);
 
-        if (_vector_index_ctx->use_spatial_partitioned()) {
+        if (_vector_index_ctx->use_acorn()) {
+            // ACORN-1 search with optional predicate
+            AcornIndexReader::SearchParams acorn_params;
+            acorn_params.k = _vector_index_ctx->k;
+            acorn_params.ef_search = std::max(40, _vector_index_ctx->k * 4);
+            AcornIndexReader::SearchResult acorn_result;
+            st = _vector_index_ctx->acorn_reader->search(
+                    _opts.vector_search_option->query_vector.data(), acorn_params, acorn_result);
+            if (st.ok()) {
+                result_ids = std::move(acorn_result.row_ids);
+                result_distances = std::move(acorn_result.distances);
+            }
+        } else if (_vector_index_ctx->use_spatial_partitioned()) {
             // Spatial-partitioned search: search matching partitions and merge
             st = _vector_index_ctx->spatial_reader->search(
                     _vector_index_ctx->query_cell_ids, _vector_index_ctx->query_view, _vector_index_ctx->k,

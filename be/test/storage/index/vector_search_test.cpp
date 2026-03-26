@@ -212,6 +212,38 @@ TEST_F(VectorIndexSearchTest, test_get_vector_meta_ignores_fallback_query_param)
     ASSERT_TRUE(status.ok());
     ASSERT_NE(status.value(), nullptr);
 }
+
+TEST_F(VectorIndexSearchTest, test_acorn_index_type_maps_to_hnsw) {
+    auto tablet_index = prepare_tablet_index();
+    tablet_index->add_common_properties("index_type", "acorn");
+    tablet_index->add_common_properties("dim", "3");
+    tablet_index->add_common_properties("is_vector_normed", "false");
+    tablet_index->add_common_properties("metric_type", "l2_distance");
+    tablet_index->add_index_properties("efconstruction", "40");
+    tablet_index->add_index_properties("m", "16");
+    tablet_index->add_search_properties("efsearch", "40");
+
+    const auto& empty_params = std::map<std::string, std::string>{};
+    auto status = get_vector_meta(tablet_index, empty_params);
+    ASSERT_TRUE(status.ok()) << status.status().message();
+    auto meta = status.value();
+    ASSERT_EQ(meta.index_type(), tenann::IndexType::kFaissHnsw);
+}
+
+TEST_F(VectorIndexSearchTest, test_acorn_build_produces_valid_vi_file) {
+    auto tablet_index = prepare_tablet_index();
+    tablet_index->add_common_properties("index_type", "acorn");
+    tablet_index->add_common_properties("dim", "3");
+    tablet_index->add_common_properties("is_vector_normed", "false");
+    tablet_index->add_common_properties("metric_type", "l2_distance");
+    tablet_index->add_index_properties("efconstruction", "40");
+    tablet_index->add_index_properties("m", "16");
+    tablet_index->add_search_properties("efsearch", "40");
+
+    auto index_path = test_vector_index_dir + "/acorn_index.vi";
+    write_vector_index(index_path, tablet_index);
+    ASSERT_TRUE(fs::path_exist(index_path));
+}
 #endif
 
 } // namespace starrocks

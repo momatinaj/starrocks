@@ -74,6 +74,7 @@ QUERY_SPECS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def get_connection(host, port):
     return pymysql.connect(
         host=host,
@@ -101,6 +102,7 @@ def table_name(mode):
 # ---------------------------------------------------------------------------
 # Data Generation
 # ---------------------------------------------------------------------------
+
 
 def generate_data(rows, dim, seed=42):
     """Generate synthetic geo-vector rows clustered around city centers."""
@@ -202,7 +204,9 @@ def load_data(conn, mode, lats, lngs, vecs):
         loaded = end
         elapsed = time.time() - t0
         rate = loaded / elapsed if elapsed > 0 else 0
-        print(f"\r  Loaded {loaded}/{rows} rows ({rate:.0f} rows/s)", end="", flush=True)
+        print(
+            f"\r  Loaded {loaded}/{rows} rows ({rate:.0f} rows/s)", end="", flush=True
+        )
 
     print()
     elapsed = time.time() - t0
@@ -212,6 +216,7 @@ def load_data(conn, mode, lats, lngs, vecs):
 # ---------------------------------------------------------------------------
 # Query Execution
 # ---------------------------------------------------------------------------
+
 
 def build_radius_query(tbl, center_lat, center_lng, radius_m, query_vec, k):
     return f"""
@@ -274,7 +279,9 @@ def run_query_set(conn, mode, query_vecs, k, num_queries):
             if spec["type"] == "radius":
                 sql = build_radius_query(tbl, c_lat, c_lng, spec["radius_m"], qvec, k)
             else:
-                sql = build_polygon_query(tbl, c_lat, c_lng, spec["half_side_deg"], qvec, k)
+                sql = build_polygon_query(
+                    tbl, c_lat, c_lng, spec["half_side_deg"], qvec, k
+                )
 
             rows, latency = run_single_query(conn, sql)
             latencies.append(latency)
@@ -288,13 +295,19 @@ def run_query_set(conn, mode, query_vecs, k, num_queries):
             "p50_ms": float(np.percentile(latencies_arr, 50)),
             "p95_ms": float(np.percentile(latencies_arr, 95)),
             "p99_ms": float(np.percentile(latencies_arr, 99)),
-            "qps": 1000.0 / float(np.mean(latencies_arr)) if np.mean(latencies_arr) > 0 else 0,
+            "qps": (
+                1000.0 / float(np.mean(latencies_arr))
+                if np.mean(latencies_arr) > 0
+                else 0
+            ),
             "result_ids": all_result_ids,
             "num_queries": len(latencies),
         }
-        print(f"  {spec_name}: p50={results[spec_name]['p50_ms']:.1f}ms "
-              f"p95={results[spec_name]['p95_ms']:.1f}ms "
-              f"p99={results[spec_name]['p99_ms']:.1f}ms")
+        print(
+            f"  {spec_name}: p50={results[spec_name]['p50_ms']:.1f}ms "
+            f"p95={results[spec_name]['p95_ms']:.1f}ms "
+            f"p99={results[spec_name]['p99_ms']:.1f}ms"
+        )
 
     return results
 
@@ -302,6 +315,7 @@ def run_query_set(conn, mode, query_vecs, k, num_queries):
 # ---------------------------------------------------------------------------
 # Recall Computation
 # ---------------------------------------------------------------------------
+
 
 def compute_recall(ground_truth_ids, candidate_ids):
     """Recall@K: fraction of ground-truth IDs found in candidate results."""
@@ -320,7 +334,11 @@ def compute_recall(ground_truth_ids, candidate_ids):
 def load_ground_truth(output_dir):
     """Load B0 results as ground truth if available."""
     gt_files = sorted(
-        [f for f in os.listdir(output_dir) if f.startswith("b0_") and f.endswith(".json")],
+        [
+            f
+            for f in os.listdir(output_dir)
+            if f.startswith("b0_") and f.endswith(".json")
+        ],
         reverse=True,
     )
     if not gt_files:
@@ -334,6 +352,7 @@ def load_ground_truth(output_dir):
 # Reporting
 # ---------------------------------------------------------------------------
 
+
 def print_summary(mode, rows, dim, k, results, recalls):
     print()
     print(f"Mode: {mode}  |  Rows: {rows}  |  Dim: {dim}  |  K: {k}")
@@ -342,9 +361,15 @@ def print_summary(mode, rows, dim, k, results, recalls):
     print(header)
     print("-" * 68)
     for spec_name, data in results.items():
-        recall_str = f"{recalls[spec_name]:.3f}" if recalls.get(spec_name) is not None else "  n/a"
-        print(f"{spec_name:<20} | {data['p50_ms']:>8.1f} | {data['p95_ms']:>8.1f} | "
-              f"{data['p99_ms']:>8.1f} | {recall_str:>7}")
+        recall_str = (
+            f"{recalls[spec_name]:.3f}"
+            if recalls.get(spec_name) is not None
+            else "  n/a"
+        )
+        print(
+            f"{spec_name:<20} | {data['p50_ms']:>8.1f} | {data['p95_ms']:>8.1f} | "
+            f"{data['p99_ms']:>8.1f} | {recall_str:>7}"
+        )
     print("-" * 68)
     print()
 
@@ -353,20 +378,38 @@ def print_summary(mode, rows, dim, k, results, recalls):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="Spatial-Vector Benchmark Runner")
-    parser.add_argument("--mode", required=True, choices=["b0", "a0", "b2"],
-                        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback)")
-    parser.add_argument("--host", default="127.0.0.1", help="StarRocks host (default: 127.0.0.1)")
+    parser.add_argument(
+        "--mode",
+        required=True,
+        choices=["b0", "a0", "b2"],
+        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback)",
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="StarRocks host (default: 127.0.0.1)"
+    )
     parser.add_argument("--port", type=int, default=9030, help="StarRocks query port")
-    parser.add_argument("--rows", type=int, default=100000, help="Number of data rows to generate")
+    parser.add_argument(
+        "--rows", type=int, default=100000, help="Number of data rows to generate"
+    )
     parser.add_argument("--dim", type=int, default=128, help="Vector dimension")
     parser.add_argument("--k", type=int, default=10, help="Top-K for queries")
-    parser.add_argument("--queries", type=int, default=50, help="Number of queries per spec")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--output", default="results/", help="Output directory for results JSON")
-    parser.add_argument("--skip-load", action="store_true",
-                        help="Skip data generation and loading (reuse existing table)")
+    parser.add_argument(
+        "--queries", type=int, default=50, help="Number of queries per spec"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--output", default="results/", help="Output directory for results JSON"
+    )
+    parser.add_argument(
+        "--skip-load",
+        action="store_true",
+        help="Skip data generation and loading (reuse existing table)",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -387,7 +430,9 @@ def main():
 
     if args.mode in ("b2", "a0"):
         print("  Enabling vector index feature...")
-        execute(conn, "ADMIN SET FRONTEND CONFIG (\"enable_experimental_vector\" = \"true\")")
+        execute(
+            conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'
+        )
 
     if not args.skip_load:
         # Generate data

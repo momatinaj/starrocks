@@ -45,6 +45,7 @@ static StatusOr<tenann::IndexType> convert_to_index_type(const std::string& type
     if (false) {
     }
     CHECK_AND_RETURN(standard_type_string, hnsw, tenann::IndexType::kFaissHnsw)
+    CHECK_AND_RETURN(standard_type_string, acorn, tenann::IndexType::kFaissHnsw)
     CHECK_AND_RETURN(standard_type_string, ivfflat, tenann::IndexType::kFaissIvfFlat)
     CHECK_AND_RETURN(standard_type_string, ivfpq, tenann::IndexType::kFaissIvfPq)
     else {

@@ -78,7 +78,11 @@ public class VectorIndexParams {
         HNSW,
 
         // Inverted File with Product Quantization
-        IVFPQ
+        IVFPQ,
+
+        // ACORN-1: predicate-aware HNSW search (construction identical to HNSW,
+        // search uses 2-hop neighbor expansion with predicate filtering)
+        ACORN
     }
 
     public enum MetricsType {

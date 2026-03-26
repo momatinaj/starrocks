@@ -275,6 +275,9 @@ set(STORAGE_FILES
     index/vector/spatial_partition_meta.cpp
     index/vector/spatial_vector_index_writer.cpp
     index/vector/spatial_vector_index_reader.cpp
+    index/vector/hnsw_graph_accessor.cpp
+    index/vector/search_predicate_evaluator.cpp
+    index/vector/acorn_index_reader.cpp
     index/vector/tenann_index_reader.cpp
     index/vector/tenann/del_id_filter.cpp
     index/vector/tenann/tenann_index_builder.cpp
