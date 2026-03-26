@@ -412,13 +412,13 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         }
         if (expectColumnRef) {
             if (call.getChild(0).isColumnRef() && call.getChild(1).isColumnRef()) {
-                return new double[]{0, 0};
+                return new double[] {0, 0};
             }
         } else {
             if (call.getChild(0) instanceof ConstantOperator && call.getChild(1) instanceof ConstantOperator) {
                 double lng = ((Number) ((ConstantOperator) call.getChild(0)).getValue()).doubleValue();
                 double lat = ((Number) ((ConstantOperator) call.getChild(1)).getValue()).doubleValue();
-                return new double[]{lng, lat};
+                return new double[] {lng, lat};
             }
         }
         return null;
