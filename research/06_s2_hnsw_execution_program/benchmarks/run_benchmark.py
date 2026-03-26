@@ -282,7 +282,7 @@ def run_single_query(conn, sql):
     return rows, latency
 
 
-def run_query_set(conn, mode, query_vecs, k, num_queries):
+def run_query_set(conn, mode, query_vecs, k, num_queries, warmup=5):
     """Run all query specs against multiple city centers and query vectors."""
     tbl = table_name(mode)
     results = {}
@@ -291,6 +291,18 @@ def run_query_set(conn, mode, query_vecs, k, num_queries):
         spec_name = spec["name"]
         latencies = []
         all_result_ids = []
+
+        if warmup > 0:
+            print(f"  {spec_name}: running {warmup} warmup queries...")
+            for wi in range(warmup):
+                qvec = query_vecs[wi % len(query_vecs)]
+                city_idx = wi % len(CITY_CENTERS)
+                _, c_lat, c_lng = CITY_CENTERS[city_idx]
+                if spec["type"] == "radius":
+                    sql = build_radius_query(tbl, c_lat, c_lng, spec["radius_m"], qvec, k)
+                else:
+                    sql = build_polygon_query(tbl, c_lat, c_lng, spec["half_side_deg"], qvec, k)
+                run_single_query(conn, sql)
 
         for qi in range(min(num_queries, len(query_vecs))):
             qvec = query_vecs[qi]
@@ -437,6 +449,12 @@ def main():
         "--output", default="results/", help="Output directory for results JSON"
     )
     parser.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="Number of warmup queries per spec before timing (default: 5)",
+    )
+    parser.add_argument(
         "--skip-load",
         action="store_true",
         help="Skip data generation and loading (reuse existing table)",
@@ -450,7 +468,7 @@ def main():
     print(f"{'='*60}")
     print(f"  Host: {args.host}:{args.port}")
     print(f"  Rows: {args.rows}  |  Dim: {args.dim}  |  K: {args.k}")
-    print(f"  Queries per spec: {args.queries}")
+    print(f"  Queries per spec: {args.queries}  |  Warmup: {args.warmup}")
     print()
 
     conn = get_connection(args.host, args.port)
@@ -491,7 +509,7 @@ def main():
 
     # Run queries
     print("[4/4] Running queries...")
-    results = run_query_set(conn, args.mode, query_vecs, args.k, args.queries)
+    results = run_query_set(conn, args.mode, query_vecs, args.k, args.queries, args.warmup)
 
     # Compute recall against B0 ground truth
     recalls = {}
