@@ -14,7 +14,7 @@ Quick-start reference for running the spatial-vector query benchmarks.
 ## Install Dependencies
 
 ```bash
-pip3 install pymysql numpy
+pip3 install pymysql numpy matplotlib
 ```
 
 ## Start the Clusters
@@ -70,6 +70,28 @@ python3 research/06_s2_hnsw_execution_program/benchmarks/compare_results.py \
 
 This prints a table with p50/p95/p99 latency, recall, and speedup vs brute force
 for each query type across all available modes.
+
+## One-Command Full Benchmark
+
+Run all three modes (B0, B2, ACORN) and generate a comparison report:
+
+```bash
+./research/06_s2_hnsw_execution_program/benchmarks/run_full_benchmark.sh
+```
+
+Options: `--rows 200000`, `--queries 100`, `--warmup 10`, `--skip-load`.
+
+## Generate Charts & Report
+
+After running benchmarks, generate an HTML report with charts:
+
+```bash
+python3 research/06_s2_hnsw_execution_program/benchmarks/generate_report.py \
+    --results-dir $OUT
+```
+
+Opens a self-contained HTML file with latency charts, recall comparison,
+speedup analysis, and box plots.
 
 ## Results
 

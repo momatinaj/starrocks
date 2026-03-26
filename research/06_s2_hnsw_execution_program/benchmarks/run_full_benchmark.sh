@@ -63,6 +63,33 @@ if ! mysql -h "$HOST" -P "$PORT" -u root -e "SELECT 1" >/dev/null 2>&1; then
     exit 1
 fi
 echo "   OK"
+
+echo ">> Checking ACORN index type support..."
+ACORN_CHECK=$(mysql -h "$HOST" -P "$PORT" -u root -N -e "
+  CREATE DATABASE IF NOT EXISTS __acorn_check;
+  USE __acorn_check;
+  DROP TABLE IF EXISTS __acorn_probe;
+  CREATE TABLE __acorn_probe (
+    id BIGINT NOT NULL,
+    v ARRAY<FLOAT> NOT NULL,
+    INDEX vi (v) USING VECTOR(\"index_type\"=\"acorn\",\"dim\"=\"4\",\"metric_type\"=\"l2_distance\",\"is_vector_normed\"=\"false\",\"M\"=\"16\",\"efconstruction\"=\"40\")
+  ) ENGINE=OLAP DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\");
+  DROP TABLE IF EXISTS __acorn_probe;
+  DROP DATABASE __acorn_check;
+" 2>&1) || true
+if echo "$ACORN_CHECK" | grep -qi "must in"; then
+    echo ""
+    echo "ERROR: The running FE does not support index_type=ACORN."
+    echo "       You need to rebuild the FE with the latest code:"
+    echo ""
+    echo "  1. Stop the cluster:  docker compose -f docker-compose.dev.yml down starrocks-custom-fe starrocks-custom-be"
+    echo "  2. Pull latest code:  git pull"
+    echo "  3. Rebuild FE:        docker compose -f docker-compose.dev.yml run --rm build-fe"
+    echo "  4. Restart cluster:   docker compose -f docker-compose.dev.yml up -d starrocks-custom-fe starrocks-custom-be"
+    echo ""
+    exit 1
+fi
+echo "   OK"
 echo ""
 
 echo "============================================================"
@@ -87,6 +114,21 @@ echo "============================================================"
 echo " Comparison"
 echo "============================================================"
 python3 "$COMPARE" --results-dir "$OUT"
+
+echo ""
+echo "============================================================"
+echo " Generating Report"
+echo "============================================================"
+REPORT="$SCRIPT_DIR/generate_report.py"
+if python3 -c "import matplotlib" 2>/dev/null; then
+    python3 "$REPORT" --results-dir "$OUT" --output "$OUT/benchmark_report.html"
+    echo ""
+    echo "Open the report:  open $OUT/benchmark_report.html"
+else
+    echo "  matplotlib not installed -- skipping charts."
+    echo "  Install with: pip3 install matplotlib"
+    echo "  Then run:     python3 $REPORT --results-dir $OUT"
+fi
 
 echo ""
 echo "Done. JSON results are in $OUT/"
