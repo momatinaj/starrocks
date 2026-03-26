@@ -259,6 +259,78 @@ TEST_F(HNSWGraphAccessorTest, test_dimension_and_ntotal) {
     ASSERT_FALSE(accessor.has_stored_vectors());
 }
 
+TEST_F(HNSWGraphAccessorTest, test_single_node_graph) {
+    auto path = write_synthetic_hnsw_file(1, 4, 3);
+
+    HNSWGraphAccessor accessor;
+    ASSERT_OK(accessor.init(path));
+    ASSERT_TRUE(accessor.is_valid());
+    ASSERT_EQ(accessor.num_nodes(), 1);
+    ASSERT_EQ(accessor.entry_point(), 0);
+
+    auto nbrs = accessor.neighbors(0, 0);
+    for (auto n : nbrs) {
+        ASSERT_TRUE(n == -1 || n == 0);
+    }
+}
+
+TEST_F(HNSWGraphAccessorTest, test_max_level) {
+    auto path = write_synthetic_hnsw_file(5, 4, 3);
+
+    HNSWGraphAccessor accessor;
+    ASSERT_OK(accessor.init(path));
+
+    ASSERT_GE(accessor.max_level(), 1);
+}
+
+TEST_F(HNSWGraphAccessorTest, test_truncated_file) {
+    std::string path = test_dir + "/truncated.vi";
+    std::ofstream ofs(path, std::ios::binary);
+    uint32_t fourcc = 0x664E4849; // valid FourCC
+    ofs.write(reinterpret_cast<const char*>(&fourcc), sizeof(fourcc));
+    int d = 8;
+    ofs.write(reinterpret_cast<const char*>(&d), sizeof(d));
+    ofs.close();
+
+    HNSWGraphAccessor accessor;
+    auto status = accessor.init(path);
+    ASSERT_FALSE(status.ok());
+}
+
+TEST_F(HNSWGraphAccessorTest, test_empty_file) {
+    std::string path = test_dir + "/empty.vi";
+    std::ofstream ofs(path, std::ios::binary);
+    ofs.close();
+
+    HNSWGraphAccessor accessor;
+    auto status = accessor.init(path);
+    ASSERT_FALSE(status.ok());
+}
+
+TEST_F(HNSWGraphAccessorTest, test_load_without_vectors_flag) {
+    auto path = write_synthetic_hnsw_file(10, 4, 16);
+
+    HNSWGraphAccessor accessor;
+    ASSERT_OK(accessor.init(path, false));
+    ASSERT_TRUE(accessor.is_valid());
+    ASSERT_FALSE(accessor.has_stored_vectors());
+    ASSERT_EQ(accessor.stored_vectors(), nullptr);
+}
+
+TEST_F(HNSWGraphAccessorTest, test_expanded_neighbors_self_exclusion) {
+    auto path = write_synthetic_hnsw_file(10, 4, 3);
+
+    HNSWGraphAccessor accessor;
+    ASSERT_OK(accessor.init(path));
+
+    for (int node = 0; node < 10; node++) {
+        auto expanded = accessor.expanded_neighbors(node, 0);
+        for (auto n : expanded) {
+            ASSERT_NE(n, node) << "expanded_neighbors should not contain self (node " << node << ")";
+        }
+    }
+}
+
 TEST_F(HNSWGraphAccessorTest, test_load_with_vectors) {
     const int num_nodes = 5;
     const int dim = 3;

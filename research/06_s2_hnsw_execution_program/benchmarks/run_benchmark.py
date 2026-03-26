@@ -6,9 +6,16 @@ Generates synthetic geo+vector data, loads it into StarRocks, executes
 spatial+vector queries at various selectivities, and reports latency / recall.
 
 Usage:
-    python3 run_benchmark.py --mode b0 --port 9030 --rows 100000
-    python3 run_benchmark.py --mode a0 --port 19030 --rows 100000
-    python3 run_benchmark.py --mode b2 --port 9030 --rows 100000
+    python3 run_benchmark.py --mode b0    --port 9030  --rows 100000
+    python3 run_benchmark.py --mode a0    --port 19030 --rows 100000
+    python3 run_benchmark.py --mode b2    --port 9030  --rows 100000
+    python3 run_benchmark.py --mode acorn --port 9030  --rows 100000
+
+Modes:
+    b0    - Brute force (no vector index). Ground truth for recall.
+    a0    - Official StarRocks release with standard HNSW ANN.
+    b2    - Custom build with planner fallback (SPATIAL_FILTER + EXACT_DISTANCE).
+    acorn - Custom build with ACORN-1 predicate-aware HNSW search.
 
 Requirements:
     pip3 install pymysql numpy
@@ -155,7 +162,7 @@ DISTRIBUTED BY HASH(id) BUCKETS 4
 PROPERTIES ("replication_num" = "1");
 """
 
-VECTOR_INDEX_CLAUSE = """,
+HNSW_INDEX_CLAUSE = """,
     INDEX vec_idx (embedding) USING VECTOR(
         "index_type" = "hnsw",
         "dim" = "{dim}",
@@ -165,6 +172,18 @@ VECTOR_INDEX_CLAUSE = """,
         "efconstruction" = "40"
     )"""
 
+ACORN_INDEX_CLAUSE = """,
+    INDEX vec_idx (embedding) USING VECTOR(
+        "index_type" = "acorn",
+        "dim" = "{dim}",
+        "metric_type" = "l2_distance",
+        "is_vector_normed" = "false",
+        "M" = "16",
+        "efconstruction" = "40"
+    )"""
+
+VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE
+
 
 def create_table(conn, mode, dim):
     tbl = table_name(mode)
@@ -172,8 +191,10 @@ def create_table(conn, mode, dim):
 
     if mode == "b0":
         idx = ""
+    elif mode == "acorn":
+        idx = ACORN_INDEX_CLAUSE.format(dim=dim)
     else:
-        idx = VECTOR_INDEX_CLAUSE.format(dim=dim)
+        idx = HNSW_INDEX_CLAUSE.format(dim=dim)
 
     ddl = DDL_BASE.format(table=tbl, index_clause=idx)
     execute(conn, ddl)
@@ -353,9 +374,19 @@ def load_ground_truth(output_dir):
 # ---------------------------------------------------------------------------
 
 
+MODE_DESCRIPTIONS = {
+    "b0": "Brute Force (Ground Truth)",
+    "a0": "Official StarRocks ANN (HNSW)",
+    "b2": "Custom Planner Fallback (SPATIAL_FILTER + EXACT_DISTANCE)",
+    "acorn": "ACORN-1 Predicate-Aware HNSW",
+}
+
+
 def print_summary(mode, rows, dim, k, results, recalls):
+    desc = MODE_DESCRIPTIONS.get(mode, mode)
     print()
-    print(f"Mode: {mode}  |  Rows: {rows}  |  Dim: {dim}  |  K: {k}")
+    print(f"Mode: {mode} -- {desc}")
+    print(f"Rows: {rows}  |  Dim: {dim}  |  K: {k}")
     print("-" * 68)
     header = f"{'Query Type':<20} | {'p50 ms':>8} | {'p95 ms':>8} | {'p99 ms':>8} | {'Recall':>7}"
     print(header)
@@ -384,8 +415,8 @@ def main():
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["b0", "a0", "b2"],
-        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback)",
+        choices=["b0", "a0", "b2", "acorn"],
+        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback), acorn (ACORN-1)",
     )
     parser.add_argument(
         "--host", default="127.0.0.1", help="StarRocks host (default: 127.0.0.1)"
@@ -428,7 +459,7 @@ def main():
     execute(conn, f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
     execute(conn, f"USE {DB_NAME}")
 
-    if args.mode in ("b2", "a0"):
+    if args.mode in ("b2", "a0", "acorn"):
         print("  Enabling vector index feature...")
         execute(
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'
@@ -489,6 +520,7 @@ def main():
 
     output_data = {
         "mode": args.mode,
+        "mode_description": MODE_DESCRIPTIONS.get(args.mode, args.mode),
         "host": args.host,
         "port": args.port,
         "rows": args.rows,

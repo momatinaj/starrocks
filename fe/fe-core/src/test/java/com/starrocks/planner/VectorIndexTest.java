@@ -618,14 +618,86 @@ public class VectorIndexTest extends PlanTestBase {
     }
 
     @Test
-    public void testAcornSpatialFallback() throws Exception {
+    public void testAcornSpatialRadius() throws Exception {
         String sql = "select c1 from test_acorn_l2 " +
                 "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
                 "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
         String plan = getVerboseExplain(sql);
-        // Until A5 planner integration, ACORN with spatial falls back just like HNSW
-        assertContains(plan, "VECTORINDEX: FALLBACK\n" +
-                "          Fallback Mode: SPATIAL_FILTER + EXACT_DISTANCE");
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "ACORN: ON");
+        assertContains(plan, "Spatial Predicate: RADIUS(39.9, 116.3, 1000.0m)");
+    }
+
+    @Test
+    public void testAcornWithoutSpatialNoFallback() throws Exception {
+        String sql = "select c1 from test_acorn_l2 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "ACORN: ON");
+    }
+
+    @Test
+    public void testHnswSpatialStillFallback() throws Exception {
+        String sql = "select c1 from test_spatial_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: FALLBACK");
+    }
+
+    @Test
+    public void testAcornSpatialPolygon() throws Exception {
+        String sql = "select c1 from test_acorn_l2 " +
+                "where st_contains(" +
+                "st_geomfromtext('POLYGON((116.2 39.8, 116.4 39.8, 116.4 40.0, 116.2 40.0, 116.2 39.8))'), " +
+                "st_point(lng, lat)) " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "ACORN: ON");
+        assertContains(plan, "Spatial Predicate: POLYGON");
+    }
+
+    @Test
+    public void testAcornSpatialPredicateKeepsFilter() throws Exception {
+        String sql = "select c1 from test_acorn_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "st_distance_sphere");
+    }
+
+    @Test
+    public void testAcornWithRangePredicateNoSpatial() throws Exception {
+        String sql = "select c1 from test_acorn_l2 " +
+                "where approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) <= 100 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "ACORN: ON");
+        assertContains(plan, "Predicate Range: 100.0");
+    }
+
+    @Test
+    public void testAcornExplainDistanceColumn() throws Exception {
+        String sql = "select c1, approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) as dist " +
+                "from test_acorn_l2 order by dist limit 5";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "ACORN: ON");
+        assertContains(plan, "Distance Column:");
+        assertContains(plan, "LimitK: 5");
+    }
+
+    @Test
+    public void testAcornExplainShowsACORNOff() throws Exception {
+        String sql = "select c1 from test_l2 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertNotContains(plan, "ACORN: ON");
     }
 
     @Test

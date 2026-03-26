@@ -214,4 +214,128 @@ TEST_F(SearchPredicateEvaluatorTest, test_factory_none) {
     ASSERT_EQ(eval, nullptr);
 }
 
+TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_exact_boundary) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::RADIUS;
+    spec.center_lat = 0.0;
+    spec.center_lng = 0.0;
+    spec.radius_meters = 111195; // ~1 degree latitude in meters
+
+    std::vector<double> lats = {0.0, 1.0, 1.1};
+    std::vector<double> lngs = {0.0, 0.0, 0.0};
+
+    SpatialRadiusEvaluator eval;
+    ASSERT_TRUE(eval.init(spec, lats, lngs).ok());
+    ASSERT_TRUE(eval.evaluate(0));  // at center
+    ASSERT_TRUE(eval.evaluate(1));  // ~111km, just at boundary
+    ASSERT_FALSE(eval.evaluate(2)); // beyond boundary
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_zero_radius) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::RADIUS;
+    spec.center_lat = kSFLat;
+    spec.center_lng = kSFLng;
+    spec.radius_meters = 0;
+
+    std::vector<double> lats = {kSFLat};
+    std::vector<double> lngs = {kSFLng};
+
+    SpatialRadiusEvaluator eval;
+    ASSERT_TRUE(eval.init(spec, lats, lngs).ok());
+    ASSERT_TRUE(eval.evaluate(0)); // exact center, dist=0, 0 <= 0
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_empty_data) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::RADIUS;
+    spec.center_lat = kSFLat;
+    spec.center_lng = kSFLng;
+    spec.radius_meters = 5000;
+
+    std::vector<double> lats, lngs;
+    SpatialRadiusEvaluator eval;
+    ASSERT_TRUE(eval.init(spec, lats, lngs).ok());
+    ASSERT_EQ(eval.num_rows(), 0);
+    ASSERT_FALSE(eval.evaluate(0)); // no data
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_radius_evaluator_wrong_type) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::POLYGON;
+
+    std::vector<double> lats = {kSFLat};
+    std::vector<double> lngs = {kSFLng};
+
+    SpatialRadiusEvaluator eval;
+    ASSERT_FALSE(eval.init(spec, lats, lngs).ok());
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_polygon_evaluator_multiple_points) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::POLYGON;
+    spec.wkt = "POLYGON((-122.5 37.7, -122.3 37.7, -122.3 37.85, -122.5 37.85, -122.5 37.7))";
+
+    std::vector<double> lats = {kSFLat, kFarLat, 37.75, 37.84};
+    std::vector<double> lngs = {kSFLng, kFarLng, -122.4, -122.4};
+
+    SpatialPolygonEvaluator eval;
+    ASSERT_TRUE(eval.init(spec, lats, lngs).ok());
+    ASSERT_TRUE(eval.evaluate(0));   // SF center: inside
+    ASSERT_FALSE(eval.evaluate(1));  // San Jose: outside
+    ASSERT_TRUE(eval.evaluate(2));   // inside box
+    ASSERT_TRUE(eval.evaluate(3));   // inside box
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_polygon_evaluator_empty_wkt) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::POLYGON;
+    spec.wkt = "";
+
+    std::vector<double> lats = {kSFLat};
+    std::vector<double> lngs = {kSFLng};
+
+    SpatialPolygonEvaluator eval;
+    ASSERT_FALSE(eval.init(spec, lats, lngs).ok());
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_polygon_evaluator_wrong_type) {
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::RADIUS;
+
+    std::vector<double> lats = {kSFLat};
+    std::vector<double> lngs = {kSFLng};
+
+    SpatialPolygonEvaluator eval;
+    ASSERT_FALSE(eval.init(spec, lats, lngs).ok());
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_from_params_missing_type) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kCenterLat] = "37.7749";
+    params[AcornPredicateSpec::kCenterLng] = "-122.4194";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::NONE);
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_from_params_unknown_type) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kPredicateType] = "unknown_type";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::NONE);
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_radius_missing_fields) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kPredicateType] = "radius";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::RADIUS);
+    ASSERT_DOUBLE_EQ(spec.center_lat, 0.0);
+    ASSERT_DOUBLE_EQ(spec.center_lng, 0.0);
+    ASSERT_DOUBLE_EQ(spec.radius_meters, 0.0);
+}
+
 } // namespace starrocks

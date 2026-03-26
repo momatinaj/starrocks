@@ -115,9 +115,19 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         opts.setResultOrder(info.isAscending);
         opts.setQueryVector(info.vectorQuery);
 
+        String indexType = info.index.getProperties().get(VectorIndexParams.CommonIndexParamKey.INDEX_TYPE.name().toLowerCase());
+        boolean isAcorn = VectorIndexParams.VectorIndexType.ACORN.name().equalsIgnoreCase(indexType);
+
         ScalarOperator predicate = scanOp.getPredicate();
         if (predicate != null) {
             if (containsSupportedSpatialPredicate(predicate)) {
+                if (isAcorn) {
+                    opts.setUseAcorn(true);
+                    extractAcornSpatialParams(predicate, scanOp, opts);
+                    opts.setEnableUseANN(true);
+                    opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
+                    return List.of(rewriteOptByDistanceColumn(topNOp, scanOp, context, predicate, info, opts));
+                }
                 opts.setFallbackMode(VectorSearchOptions.FallbackMode.SPATIAL_FILTER_EXACT);
                 LogicalOlapScanOperator newScanOp = LogicalOlapScanOperator.builder()
                         .withOperator(scanOp)
@@ -125,17 +135,17 @@ public class RewriteToVectorPlanRule extends TransformationRule {
                 return List.of(OptExpression.create(topNOp, OptExpression.create(newScanOp)));
             }
             Optional<Double> value = extractVectorRange(predicate, info);
-            // If some predicates cannot be parsed to vector range, vector index cannot be used.
             if (value.isEmpty()) {
                 return List.of();
             }
-            // All the predicates are parsed to vector range, so remove predicates from scan operator.
             predicate = null;
             opts.setPredicateRange(value.get());
         }
 
         opts.setEnableUseANN(true);
-        String indexType = info.index.getProperties().get(VectorIndexParams.CommonIndexParamKey.INDEX_TYPE.name().toLowerCase());
+        if (isAcorn) {
+            opts.setUseAcorn(true);
+        }
         opts.setUseIVFPQ(VectorIndexParams.VectorIndexType.IVFPQ.name().equalsIgnoreCase(indexType));
         opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
 
@@ -305,6 +315,168 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         }
 
         return false;
+    }
+
+    /**
+     * Extract spatial predicate parameters for ACORN-1 predicate-aware search.
+     *
+     * Supported patterns:
+     *   st_distance_sphere(lng_col, lat_col, const_lng, const_lat) <= const_radius
+     *   st_distance_sphere(st_point(lng_col, lat_col), st_point(const_lng, const_lat)) <= const_radius
+     *   st_contains(st_geomfromtext('POLYGON(...)'), st_point(lng_col, lat_col))
+     */
+    private void extractAcornSpatialParams(ScalarOperator predicate, LogicalOlapScanOperator scanOp,
+                                           VectorSearchOptions opts) {
+        if (predicate instanceof BinaryPredicateOperator) {
+            ScalarOperator lhs = predicate.getChild(0);
+            ScalarOperator rhs = predicate.getChild(1);
+            if (lhs instanceof CallOperator && ((CallOperator) lhs).getFnName().equalsIgnoreCase(ST_DISTANCE_SPHERE)) {
+                extractRadiusPredicate((CallOperator) lhs, rhs, scanOp, opts);
+                return;
+            }
+            if (rhs instanceof CallOperator && ((CallOperator) rhs).getFnName().equalsIgnoreCase(ST_DISTANCE_SPHERE)) {
+                extractRadiusPredicate((CallOperator) rhs, lhs, scanOp, opts);
+                return;
+            }
+        }
+
+        if (predicate instanceof CallOperator) {
+            CallOperator call = (CallOperator) predicate;
+            if (call.getFnName().equalsIgnoreCase(ST_CONTAINS)) {
+                extractPolygonPredicate(call, scanOp, opts);
+                return;
+            }
+        }
+
+        if (predicate instanceof CompoundPredicateOperator) {
+            for (ScalarOperator child : predicate.getChildren()) {
+                extractAcornSpatialParams(child, scanOp, opts);
+                if (opts.getAcornPredicateType() != VectorSearchOptions.AcornPredicateType.NONE) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void extractRadiusPredicate(CallOperator distCall, ScalarOperator boundOp,
+                                        LogicalOlapScanOperator scanOp, VectorSearchOptions opts) {
+        if (!(boundOp instanceof ConstantOperator)) {
+            return;
+        }
+        double radius = ((Number) ((ConstantOperator) boundOp).getValue()).doubleValue();
+
+        List<ScalarOperator> args = distCall.getChildren();
+        String latCol = "";
+        String lngCol = "";
+        double centerLat = 0;
+        double centerLng = 0;
+
+        if (args.size() == 4) {
+            // st_distance_sphere(lng_col, lat_col, const_lng, const_lat)
+            if (args.get(0).isColumnRef()) {
+                lngCol = resolveColumnName(args.get(0), scanOp);
+            }
+            if (args.get(1).isColumnRef()) {
+                latCol = resolveColumnName(args.get(1), scanOp);
+            }
+            if (args.get(2) instanceof ConstantOperator) {
+                centerLng = ((Number) ((ConstantOperator) args.get(2)).getValue()).doubleValue();
+            }
+            if (args.get(3) instanceof ConstantOperator) {
+                centerLat = ((Number) ((ConstantOperator) args.get(3)).getValue()).doubleValue();
+            }
+        } else if (args.size() == 2) {
+            // st_distance_sphere(st_point(lng_col, lat_col), st_point(const_lng, const_lat))
+            double[] colLatLng = extractPointArgs(args.get(0), scanOp, true);
+            double[] constLatLng = extractPointArgs(args.get(1), scanOp, false);
+            if (colLatLng != null && constLatLng != null) {
+                lngCol = resolveColumnName(((CallOperator) args.get(0)).getChild(0), scanOp);
+                latCol = resolveColumnName(((CallOperator) args.get(0)).getChild(1), scanOp);
+                centerLng = constLatLng[0];
+                centerLat = constLatLng[1];
+            }
+        }
+
+        if (!latCol.isEmpty() && !lngCol.isEmpty()) {
+            opts.setAcornRadiusPredicate(centerLat, centerLng, radius, latCol, lngCol);
+        }
+    }
+
+    private double[] extractPointArgs(ScalarOperator op, LogicalOlapScanOperator scanOp, boolean expectColumnRef) {
+        if (!(op instanceof CallOperator)) {
+            return null;
+        }
+        CallOperator call = (CallOperator) op;
+        if (!call.getFnName().equalsIgnoreCase("st_point") || call.getChildren().size() != 2) {
+            return null;
+        }
+        if (expectColumnRef) {
+            if (call.getChild(0).isColumnRef() && call.getChild(1).isColumnRef()) {
+                return new double[]{0, 0};
+            }
+        } else {
+            if (call.getChild(0) instanceof ConstantOperator && call.getChild(1) instanceof ConstantOperator) {
+                double lng = ((Number) ((ConstantOperator) call.getChild(0)).getValue()).doubleValue();
+                double lat = ((Number) ((ConstantOperator) call.getChild(1)).getValue()).doubleValue();
+                return new double[]{lng, lat};
+            }
+        }
+        return null;
+    }
+
+    private void extractPolygonPredicate(CallOperator stContains, LogicalOlapScanOperator scanOp,
+                                         VectorSearchOptions opts) {
+        if (stContains.getChildren().size() != 2) {
+            return;
+        }
+
+        ScalarOperator geomArg = stContains.getChild(0);
+        ScalarOperator pointArg = stContains.getChild(1);
+
+        String wkt = extractWktFromGeomFromText(geomArg);
+        if (wkt == null || wkt.isEmpty()) {
+            return;
+        }
+
+        String latCol = "";
+        String lngCol = "";
+        if (pointArg instanceof CallOperator) {
+            CallOperator pointCall = (CallOperator) pointArg;
+            if (pointCall.getFnName().equalsIgnoreCase("st_point") && pointCall.getChildren().size() == 2) {
+                if (pointCall.getChild(0).isColumnRef()) {
+                    lngCol = resolveColumnName(pointCall.getChild(0), scanOp);
+                }
+                if (pointCall.getChild(1).isColumnRef()) {
+                    latCol = resolveColumnName(pointCall.getChild(1), scanOp);
+                }
+            }
+        }
+
+        if (!latCol.isEmpty() && !lngCol.isEmpty()) {
+            opts.setAcornPolygonPredicate(wkt, latCol, lngCol);
+        }
+    }
+
+    private String extractWktFromGeomFromText(ScalarOperator op) {
+        if (op instanceof CallOperator) {
+            CallOperator call = (CallOperator) op;
+            if (call.getFnName().equalsIgnoreCase("st_geomfromtext") && call.getChildren().size() == 1) {
+                if (call.getChild(0) instanceof ConstantOperator) {
+                    return String.valueOf(((ConstantOperator) call.getChild(0)).getValue());
+                }
+            }
+        }
+        return null;
+    }
+
+    private String resolveColumnName(ScalarOperator op, LogicalOlapScanOperator scanOp) {
+        if (op instanceof ColumnRefOperator) {
+            Column col = scanOp.getColRefToColumnMetaMap().get(op);
+            if (col != null) {
+                return col.getName();
+            }
+        }
+        return "";
     }
 
     /**

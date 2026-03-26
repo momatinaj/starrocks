@@ -41,8 +41,13 @@ public class VectorSearchOptions {
         }
     }
 
+    public enum AcornPredicateType {
+        NONE, RADIUS, POLYGON
+    }
+
     private boolean enableUseANN = false;
     private boolean useIVFPQ = false;
+    private boolean useAcorn = false;
     private FallbackMode fallbackMode = FallbackMode.NONE;
 
     private String distanceColumnName = "";
@@ -53,6 +58,14 @@ public class VectorSearchOptions {
 
     private double predicateRange = -1;
     private List<String> queryVector = new ArrayList<>();
+
+    private AcornPredicateType acornPredicateType = AcornPredicateType.NONE;
+    private double acornCenterLat = 0.0;
+    private double acornCenterLng = 0.0;
+    private double acornRadiusMeters = 0.0;
+    private String acornWkt = "";
+    private String acornLatColumn = "";
+    private String acornLngColumn = "";
 
     public boolean isEnableUseANN() {
         return enableUseANN;
@@ -106,6 +119,35 @@ public class VectorSearchOptions {
         this.resultOrder = isAsc ? RESULT_ORDER_ASC : RESULT_ORDER_DESC;
     }
 
+    public boolean isUseAcorn() {
+        return useAcorn;
+    }
+
+    public void setUseAcorn(boolean useAcorn) {
+        this.useAcorn = useAcorn;
+    }
+
+    public void setAcornRadiusPredicate(double centerLat, double centerLng, double radiusMeters,
+                                        String latColumn, String lngColumn) {
+        this.acornPredicateType = AcornPredicateType.RADIUS;
+        this.acornCenterLat = centerLat;
+        this.acornCenterLng = centerLng;
+        this.acornRadiusMeters = radiusMeters;
+        this.acornLatColumn = latColumn;
+        this.acornLngColumn = lngColumn;
+    }
+
+    public void setAcornPolygonPredicate(String wkt, String latColumn, String lngColumn) {
+        this.acornPredicateType = AcornPredicateType.POLYGON;
+        this.acornWkt = wkt;
+        this.acornLatColumn = latColumn;
+        this.acornLngColumn = lngColumn;
+    }
+
+    public AcornPredicateType getAcornPredicateType() {
+        return acornPredicateType;
+    }
+
     public TVectorSearchOptions toThrift() {
         TVectorSearchOptions opts = new TVectorSearchOptions();
         opts.setEnable_use_ann(enableUseANN);
@@ -116,9 +158,27 @@ public class VectorSearchOptions {
         opts.setVector_range(predicateRange);
         opts.setResult_order(resultOrder);
         opts.setUse_ivfpq(useIVFPQ);
+
+        Map<String, String> queryParams = new HashMap<>();
         if (isUseFallback()) {
-            Map<String, String> queryParams = new HashMap<>();
             queryParams.put(QUERY_PARAM_FALLBACK_MODE, fallbackMode.name());
+        }
+        if (useAcorn) {
+            queryParams.put("index_type", "acorn");
+            if (acornPredicateType != AcornPredicateType.NONE) {
+                queryParams.put("acorn_predicate_type", acornPredicateType.name());
+                queryParams.put("acorn_lat_column", acornLatColumn);
+                queryParams.put("acorn_lng_column", acornLngColumn);
+                if (acornPredicateType == AcornPredicateType.RADIUS) {
+                    queryParams.put("acorn_predicate_center_lat", String.valueOf(acornCenterLat));
+                    queryParams.put("acorn_predicate_center_lng", String.valueOf(acornCenterLng));
+                    queryParams.put("acorn_predicate_radius_m", String.valueOf(acornRadiusMeters));
+                } else if (acornPredicateType == AcornPredicateType.POLYGON) {
+                    queryParams.put("acorn_predicate_wkt", acornWkt);
+                }
+            }
+        }
+        if (!queryParams.isEmpty()) {
             opts.setQuery_params(queryParams);
         }
         return opts;
@@ -129,14 +189,27 @@ public class VectorSearchOptions {
             return prefix + "VECTORINDEX: FALLBACK" + "\n" +
                     prefix + prefix + "Fallback Mode: " + fallbackMode.getExplainName() + "\n";
         }
-        return prefix + "VECTORINDEX: ON" + "\n" +
-                prefix + prefix +
-                "IVFPQ: " + (useIVFPQ ? "ON" : "OFF") + ", " +
-                "Distance Column: <" + distanceSlotId + ":" + distanceColumnName + ">, " +
-                "LimitK: " + limitK + ", " +
-                "Order: " + (resultOrder == RESULT_ORDER_ASC ? "ASC" : "DESC") + ", " +
-                "Query Vector: " + queryVector + ", " +
-                "Predicate Range: " + predicateRange +
-                "\n";
+        StringBuilder sb = new StringBuilder();
+        sb.append(prefix).append("VECTORINDEX: ON").append("\n");
+        sb.append(prefix).append(prefix);
+        sb.append("IVFPQ: ").append(useIVFPQ ? "ON" : "OFF").append(", ");
+        sb.append("Distance Column: <").append(distanceSlotId).append(":").append(distanceColumnName).append(">, ");
+        sb.append("LimitK: ").append(limitK).append(", ");
+        sb.append("Order: ").append(resultOrder == RESULT_ORDER_ASC ? "ASC" : "DESC").append(", ");
+        sb.append("Query Vector: ").append(queryVector).append(", ");
+        sb.append("Predicate Range: ").append(predicateRange);
+        if (useAcorn) {
+            sb.append(", ACORN: ON");
+            if (acornPredicateType == AcornPredicateType.RADIUS) {
+                sb.append(", Spatial Predicate: RADIUS(")
+                        .append(acornCenterLat).append(", ")
+                        .append(acornCenterLng).append(", ")
+                        .append(acornRadiusMeters).append("m)");
+            } else if (acornPredicateType == AcornPredicateType.POLYGON) {
+                sb.append(", Spatial Predicate: POLYGON");
+            }
+        }
+        sb.append("\n");
+        return sb.toString();
     }
 }

@@ -48,7 +48,6 @@ public:
     struct SearchParams {
         int k = 10;
         int ef_search = 40;
-        double acorn_min_selectivity = 0.01;
     };
 
     AcornIndexReader() = default;

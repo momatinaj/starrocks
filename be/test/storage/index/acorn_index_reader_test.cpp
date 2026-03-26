@@ -424,12 +424,10 @@ TEST_F(AcornIndexReaderTest, test_uninitialized_reader) {
 }
 
 TEST_F(AcornIndexReaderTest, test_no_vector_data) {
-    // Use graph-only file so vectors are NOT auto-loaded
     auto path = build_synthetic_hnsw_graph_only(kNumNodes, kM, kDim);
 
     AcornIndexReader reader;
     ASSERT_OK(reader.init(path));
-    // Don't set vector data -- auto-load should not happen for graph-only file
 
     float query[kDim] = {0};
     AcornIndexReader::SearchParams params;
@@ -437,6 +435,171 @@ TEST_F(AcornIndexReaderTest, test_no_vector_data) {
 
     auto status = reader.search(query, params, result);
     ASSERT_FALSE(status.ok());
+}
+
+TEST_F(AcornIndexReaderTest, test_search_with_polygon_predicate) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    std::vector<double> lats(kNumNodes), lngs(kNumNodes);
+    for (int i = 0; i < kNumNodes; i++) {
+        if (i % 3 == 0) {
+            lats[i] = 37.78;
+            lngs[i] = -122.42;
+        } else {
+            lats[i] = 40.0;
+            lngs[i] = -100.0;
+        }
+    }
+
+    AcornPredicateSpec spec;
+    spec.type = AcornPredicateSpec::POLYGON;
+    spec.wkt = "POLYGON((-122.5 37.7, -122.3 37.7, -122.3 37.85, -122.5 37.85, -122.5 37.7))";
+
+    auto evaluator = create_predicate_evaluator(spec);
+    ASSERT_NE(evaluator, nullptr);
+    ASSERT_OK(evaluator->init(spec, lats, lngs));
+
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+    reader.set_predicate_evaluator(std::move(evaluator));
+
+    float query[kDim] = {0};
+    AcornIndexReader::SearchParams params;
+    params.k = 10;
+    params.ef_search = 40;
+
+    AcornIndexReader::SearchResult result;
+    ASSERT_OK(reader.search(query, params, result));
+
+    SpatialPolygonEvaluator checker;
+    ASSERT_OK(checker.init(spec, lats, lngs));
+    for (auto id : result.row_ids) {
+        ASSERT_TRUE(checker.evaluate(id)) << "Row " << id << " is not inside polygon";
+    }
+}
+
+TEST_F(AcornIndexReaderTest, test_search_varying_k) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    float query[kDim];
+    std::copy(vectors.begin(), vectors.begin() + kDim, query);
+
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+
+    for (int k : {1, 3, 5, 10, 20, 50}) {
+        AcornIndexReader::SearchParams params;
+        params.k = k;
+        params.ef_search = std::max(40, k * 4);
+
+        AcornIndexReader::SearchResult result;
+        ASSERT_OK(reader.search(query, params, result));
+        ASSERT_LE(static_cast<int>(result.row_ids.size()), k);
+        ASSERT_GT(result.row_ids.size(), 0);
+        ASSERT_EQ(result.row_ids[0], 0);
+    }
+}
+
+TEST_F(AcornIndexReaderTest, test_search_k_larger_than_num_rows) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    float query[kDim] = {0};
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+
+    AcornIndexReader::SearchParams params;
+    params.k = kNumNodes + 100;
+    params.ef_search = kNumNodes + 100;
+
+    AcornIndexReader::SearchResult result;
+    ASSERT_OK(reader.search(query, params, result));
+    ASSERT_LE(static_cast<int>(result.row_ids.size()), kNumNodes);
+}
+
+TEST_F(AcornIndexReaderTest, test_recall_without_predicate) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+
+    for (int qi = 0; qi < 5; qi++) {
+        float query[kDim];
+        std::copy(vectors.begin() + qi * kDim, vectors.begin() + (qi + 1) * kDim, query);
+
+        AcornIndexReader::SearchParams params;
+        params.k = 5;
+        params.ef_search = 40;
+
+        AcornIndexReader::SearchResult result;
+        ASSERT_OK(reader.search(query, params, result));
+
+        auto gt = brute_force_knn(vectors.data(), kNumNodes, kDim, query, 5);
+        double recall = compute_recall(result.row_ids, gt);
+        ASSERT_GE(recall, 0.2) << "Recall too low for query " << qi << ": " << recall;
+        ASSERT_EQ(result.row_ids[0], qi) << "Nearest neighbor should be the query vector itself";
+    }
+}
+
+TEST_F(AcornIndexReaderTest, test_distances_sorted) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    float query[kDim] = {0};
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+
+    AcornIndexReader::SearchParams params;
+    params.k = 20;
+    params.ef_search = 80;
+
+    AcornIndexReader::SearchResult result;
+    ASSERT_OK(reader.search(query, params, result));
+
+    ASSERT_EQ(result.row_ids.size(), result.distances.size());
+    for (size_t i = 1; i < result.distances.size(); i++) {
+        ASSERT_LE(result.distances[i - 1], result.distances[i])
+                << "Distances not sorted at position " << i;
+    }
+}
+
+TEST_F(AcornIndexReaderTest, test_init_invalid_path) {
+    AcornIndexReader reader;
+    auto st = reader.init("nonexistent_dir/nonexistent.vi");
+    ASSERT_FALSE(st.ok());
+    ASSERT_FALSE(reader.is_valid());
+}
+
+TEST_F(AcornIndexReaderTest, test_dimension_and_num_nodes) {
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim);
+
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+    ASSERT_TRUE(reader.is_valid());
+    ASSERT_EQ(reader.dimension(), kDim);
+    ASSERT_EQ(reader.num_nodes(), kNumNodes);
+}
+
+TEST_F(AcornIndexReaderTest, test_search_with_ef_search_1) {
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+
+    float query[kDim];
+    std::copy(vectors.begin(), vectors.begin() + kDim, query);
+
+    AcornIndexReader reader;
+    ASSERT_OK(reader.init(path));
+
+    AcornIndexReader::SearchParams params;
+    params.k = 1;
+    params.ef_search = 1;
+
+    AcornIndexReader::SearchResult result;
+    ASSERT_OK(reader.search(query, params, result));
+    ASSERT_GE(result.row_ids.size(), 1);
 }
 
 } // namespace starrocks

@@ -15,7 +15,6 @@
 #include "storage/index/vector/search_predicate_evaluator.h"
 
 #include <cmath>
-#include <regex>
 #include <sstream>
 
 namespace starrocks {
