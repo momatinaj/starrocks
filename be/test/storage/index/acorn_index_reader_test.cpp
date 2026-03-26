@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "fs/fs.h"
+#include "fs/fs_util.h"
 #include "storage/index/vector/search_predicate_evaluator.h"
 #include "testutil/assert.h"
 

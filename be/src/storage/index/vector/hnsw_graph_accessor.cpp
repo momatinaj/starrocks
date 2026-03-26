@@ -18,6 +18,7 @@
 #include <fstream>
 
 #include "common/logging.h"
+#include "fmt/format.h"
 #include "fs/fs.h"
 
 namespace starrocks {
