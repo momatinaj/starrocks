@@ -18,6 +18,7 @@
 #include <s2/s2cap.h>
 #include <s2/s2earth.h>
 #include <s2/s2latlng.h>
+#include <s2/s2loop.h>
 #include <s2/s2polygon.h>
 
 #include <algorithm>
@@ -275,6 +276,24 @@ TEST_F(S2CellUtilsTest, covering_general_s2region_matches_cap) {
     std::set<uint64_t> set1(from_cap_fn.begin(), from_cap_fn.end());
     std::set<uint64_t> set2(from_region.begin(), from_region.end());
     ASSERT_EQ(set1, set2);
+}
+
+TEST_F(S2CellUtilsTest, covering_polygon_region) {
+    // Build an S2Polygon from a simple square and verify covering
+    std::vector<S2Point> pts;
+    pts.push_back(S2LatLng::FromDegrees(39.8, 116.2).ToPoint());
+    pts.push_back(S2LatLng::FromDegrees(39.8, 116.4).ToPoint());
+    pts.push_back(S2LatLng::FromDegrees(40.0, 116.4).ToPoint());
+    pts.push_back(S2LatLng::FromDegrees(40.0, 116.2).ToPoint());
+    auto loop = std::make_unique<S2Loop>(pts);
+    loop->Normalize();
+    S2Polygon polygon(std::move(loop));
+
+    auto covering = s2_covering_cell_ids(polygon, 12, 64);
+    ASSERT_FALSE(covering.empty());
+
+    uint64_t center_cell = s2_cell_id_from_latlng(39.9, 116.3, 12);
+    ASSERT_NE(std::find(covering.begin(), covering.end(), center_cell), covering.end());
 }
 
 // ==================== Partition distribution ====================

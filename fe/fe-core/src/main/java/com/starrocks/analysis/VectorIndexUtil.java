@@ -121,9 +121,13 @@ public class VectorIndexUtil {
             throw new SemanticException("The vector index type is unknown");
         }
 
-        // ACORN uses identical construction/search params to HNSW
-        VectorIndexType paramValidationType =
-                vectorIndexType == VectorIndexType.ACORN ? VectorIndexType.HNSW : vectorIndexType;
+        // ACORN and GRID_HNSW use identical construction/search params to HNSW
+        VectorIndexType paramValidationType;
+        if (vectorIndexType == VectorIndexType.ACORN || vectorIndexType == VectorIndexType.GRID_HNSW) {
+            paramValidationType = VectorIndexType.HNSW;
+        } else {
+            paramValidationType = vectorIndexType;
+        }
 
         // check whether index and search params define with wrong index type
         configIndexParams.removeAll(Optional.ofNullable(indexParamsGroupByType.get(paramValidationType))
@@ -147,7 +151,6 @@ public class VectorIndexUtil {
             if (m == null) {
                 throw new SemanticException("`M_IVFPQ` is required for IVFPQ index");
             }
-            // m is a valid integer which is guaranteed by checkParams.
             int mValue = Integer.parseInt(m);
 
             String dim = properties.get(CommonIndexParamKey.DIM.name().toUpperCase());
@@ -155,6 +158,18 @@ public class VectorIndexUtil {
             if (dimValue % mValue != 0) {
                 throw new SemanticException("`DIM` should be a multiple of `M_IVFPQ` for IVFPQ index");
             }
+        }
+
+        if (vectorIndexType == VectorIndexType.GRID_HNSW) {
+            String latCol = properties.get(IndexParamsKey.LAT_COLUMN.name().toUpperCase());
+            String lngCol = properties.get(IndexParamsKey.LNG_COLUMN.name().toUpperCase());
+            if (latCol == null || latCol.trim().isEmpty()) {
+                throw new SemanticException("`lat_column` is required for GRID_HNSW index");
+            }
+            if (lngCol == null || lngCol.trim().isEmpty()) {
+                throw new SemanticException("`lng_column` is required for GRID_HNSW index");
+            }
+            properties.put("is_spatial_partitioned", "true");
         }
 
         // add default properties

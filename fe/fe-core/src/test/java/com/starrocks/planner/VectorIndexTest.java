@@ -120,6 +120,19 @@ public class VectorIndexTest extends PlanTestBase {
                 + "DUPLICATE KEY(c0) "
                 + "DISTRIBUTED BY HASH(c0) BUCKETS 1 "
                 + "PROPERTIES ('replication_num'='1');");
+
+        starRocksAssert.withTable("CREATE TABLE test.test_grid_hnsw_l2 ("
+                + " c0 INT,"
+                + " lng DOUBLE,"
+                + " lat DOUBLE,"
+                + " c1 array<float> NOT NULL,"
+                + " INDEX index_vector1 (c1) USING VECTOR ('metric_type' = 'l2_distance', "
+                + "'is_vector_normed' = 'false', 'M' = '16', 'index_type' = 'grid_hnsw', 'dim'='5', "
+                + "'s2_level' = '12', 'lat_column' = 'lat', 'lng_column' = 'lng') "
+                + ") "
+                + "DUPLICATE KEY(c0) "
+                + "DISTRIBUTED BY HASH(c0) BUCKETS 1 "
+                + "PROPERTIES ('replication_num'='1');");
     }
 
     @Test
@@ -698,6 +711,90 @@ public class VectorIndexTest extends PlanTestBase {
         String plan = getVerboseExplain(sql);
         assertContains(plan, "VECTORINDEX: ON");
         assertNotContains(plan, "ACORN: ON");
+    }
+
+    @Test
+    public void testGridHnswIndexDDL() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "GRID_HNSW: ON");
+    }
+
+    @Test
+    public void testGridHnswSpatialRadius() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "GRID_HNSW: ON");
+        assertContains(plan, "Spatial Predicate: RADIUS(39.9, 116.3, 1000.0m)");
+    }
+
+    @Test
+    public void testGridHnswSpatialPolygon() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "where st_contains(" +
+                "st_geomfromtext('POLYGON((116.2 39.8, 116.4 39.8, 116.4 40.0, 116.2 40.0, 116.2 39.8))'), " +
+                "st_point(lng, lat)) " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "GRID_HNSW: ON");
+        assertContains(plan, "Spatial Predicate: POLYGON");
+    }
+
+    @Test
+    public void testGridHnswSpatialPredicateKeepsFilter() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "st_distance_sphere");
+    }
+
+    @Test
+    public void testGridHnswNoSpatialStillANN() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "GRID_HNSW: ON");
+        assertNotContains(plan, "FALLBACK");
+    }
+
+    @Test
+    public void testGridHnswExplainDistanceColumn() throws Exception {
+        String sql = "select c1, approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) as dist " +
+                "from test_grid_hnsw_l2 order by dist limit 5";
+        String plan = getVerboseExplain(sql);
+        assertContains(plan, "VECTORINDEX: ON");
+        assertContains(plan, "GRID_HNSW: ON");
+        assertContains(plan, "Distance Column:");
+        assertContains(plan, "LimitK: 5");
+    }
+
+    @Test
+    public void testGridHnswThriftParams() throws Exception {
+        String sql = "select c1 from test_grid_hnsw_l2 " +
+                "where st_distance_sphere(lng, lat, 116.3, 39.9) <= 1000 " +
+                "order by approx_l2_distance([1.1,2.2,3.3,4.4,5.5], c1) limit 10";
+        ExecPlan execPlan = getExecPlan(sql);
+        OlapScanNode scanNode = (OlapScanNode) execPlan.getScanNodes().get(0);
+        TPlanNode planNode = new TPlanNode();
+        scanNode.toThrift(planNode);
+
+        Assertions.assertTrue(planNode.getOlap_scan_node().isSetVector_search_options());
+        Assertions.assertTrue(planNode.getOlap_scan_node().getVector_search_options().isEnable_use_ann());
+        Assertions.assertEquals("grid_hnsw",
+                planNode.getOlap_scan_node().getVector_search_options().getQuery_params()
+                        .get("index_type"));
+        Assertions.assertEquals("RADIUS",
+                planNode.getOlap_scan_node().getVector_search_options().getQuery_params()
+                        .get("grid_predicate_type"));
     }
 
     @Test

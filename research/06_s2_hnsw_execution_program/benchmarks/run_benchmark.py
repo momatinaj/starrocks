@@ -182,6 +182,19 @@ ACORN_INDEX_CLAUSE = """,
         "efconstruction" = "40"
     )"""
 
+GRID_HNSW_INDEX_CLAUSE = """,
+    INDEX vec_idx (embedding) USING VECTOR(
+        "index_type" = "grid_hnsw",
+        "dim" = "{dim}",
+        "metric_type" = "l2_distance",
+        "is_vector_normed" = "false",
+        "M" = "16",
+        "efconstruction" = "40",
+        "s2_level" = "12",
+        "lat_column" = "lat",
+        "lng_column" = "lng"
+    )"""
+
 VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE
 
 
@@ -193,6 +206,8 @@ def create_table(conn, mode, dim):
         idx = ""
     elif mode == "acorn":
         idx = ACORN_INDEX_CLAUSE.format(dim=dim)
+    elif mode == "grid":
+        idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim)
     else:
         idx = HNSW_INDEX_CLAUSE.format(dim=dim)
 
@@ -391,6 +406,7 @@ MODE_DESCRIPTIONS = {
     "a0": "Official StarRocks ANN (HNSW)",
     "b2": "Custom Planner Fallback (SPATIAL_FILTER + EXACT_DISTANCE)",
     "acorn": "ACORN-1 Predicate-Aware HNSW",
+    "grid": "Grid-HNSW (Spatially Partitioned HNSW)",
 }
 
 
@@ -427,8 +443,8 @@ def main():
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["b0", "a0", "b2", "acorn"],
-        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback), acorn (ACORN-1)",
+        choices=["b0", "a0", "b2", "acorn", "grid"],
+        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback), acorn (ACORN-1), grid (Grid-HNSW)",
     )
     parser.add_argument(
         "--host", default="127.0.0.1", help="StarRocks host (default: 127.0.0.1)"
@@ -477,7 +493,7 @@ def main():
     execute(conn, f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
     execute(conn, f"USE {DB_NAME}")
 
-    if args.mode in ("b2", "a0", "acorn"):
+    if args.mode in ("b2", "a0", "acorn", "grid"):
         print("  Enabling vector index feature...")
         execute(
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'

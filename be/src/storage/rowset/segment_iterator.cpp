@@ -50,6 +50,7 @@
 #include "storage/index/vector/search_predicate_evaluator.h"
 #include "storage/index/vector/vector_search_option.h"
 #include "geo/s2_cell_utils.h"
+#include "geo/geo_types.h"
 #include "storage/lake/update_manager.h"
 #include "storage/projection_iterator.h"
 #include "storage/range.h"
@@ -792,11 +793,34 @@ Status SegmentIterator::_init_ann_reader() {
                     tablet_index_meta, _vector_index_ctx->query_params));
 
             if (_vector_index_ctx->spatial_reader->is_valid()) {
-                // Compute query cell IDs: search ALL partitions for MVP
-                // (spatial predicate filtering can be added later)
-                const auto& partitions = _vector_index_ctx->spatial_reader->manifest().partitions();
-                for (const auto& p : partitions) {
-                    _vector_index_ctx->query_cell_ids.push_back(p.cell_id);
+                int s2_level = _vector_index_ctx->spatial_reader->manifest().s2_level();
+                auto& qp = _vector_index_ctx->query_params;
+                auto pt_it = qp.find("grid_predicate_type");
+                if (pt_it != qp.end()) {
+                    std::string pred_type = pt_it->second;
+                    std::transform(pred_type.begin(), pred_type.end(), pred_type.begin(), ::tolower);
+                    if (pred_type == "radius") {
+                        double lat = std::stod(qp.at("grid_predicate_center_lat"));
+                        double lng = std::stod(qp.at("grid_predicate_center_lng"));
+                        double radius_m = std::stod(qp.at("grid_predicate_radius_m"));
+                        _vector_index_ctx->query_cell_ids =
+                                s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level);
+                    } else if (pred_type == "polygon") {
+                        std::string wkt = qp.at("grid_predicate_wkt");
+                        GeoParseStatus geo_status;
+                        std::unique_ptr<GeoShape> shape(GeoShape::from_wkt(wkt.data(), wkt.size(), &geo_status));
+                        if (shape && shape->type() == GEO_SHAPE_POLYGON) {
+                            auto* poly = static_cast<GeoPolygon*>(shape.get());
+                            _vector_index_ctx->query_cell_ids =
+                                    s2_covering_cell_ids(*poly->polygon(), s2_level);
+                        }
+                    }
+                }
+                if (_vector_index_ctx->query_cell_ids.empty()) {
+                    const auto& partitions = _vector_index_ctx->spatial_reader->manifest().partitions();
+                    for (const auto& p : partitions) {
+                        _vector_index_ctx->query_cell_ids.push_back(p.cell_id);
+                    }
                 }
                 return Status::OK();
             }

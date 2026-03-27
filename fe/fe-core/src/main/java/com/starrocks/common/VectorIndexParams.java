@@ -82,7 +82,12 @@ public class VectorIndexParams {
 
         // ACORN-1: predicate-aware HNSW search (construction identical to HNSW,
         // search uses 2-hop neighbor expansion with predicate filtering)
-        ACORN
+        ACORN,
+
+        // Spatially partitioned HNSW: data partitioned by S2 cell at write time,
+        // each cell gets its own HNSW index. At query time only cells overlapping
+        // the spatial predicate are searched.
+        GRID_HNSW
     }
 
     public enum MetricsType {
@@ -145,6 +150,32 @@ public class VectorIndexParams {
             @Override
             public void check(String value) {
                 validateInteger(value, "M_IVFPQ", 1);
+            }
+        },
+
+        // For GRID_HNSW
+        S2_LEVEL(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                validateInteger(value, "S2_LEVEL", 1);
+            }
+        },
+
+        LAT_COLUMN(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                if (value == null || value.trim().isEmpty()) {
+                    throw new SemanticException("Value of `LAT_COLUMN` must be a non-empty column name");
+                }
+            }
+        },
+
+        LNG_COLUMN(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                if (value == null || value.trim().isEmpty()) {
+                    throw new SemanticException("Value of `LNG_COLUMN` must be a non-empty column name");
+                }
             }
         };
 

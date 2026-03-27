@@ -48,6 +48,7 @@ public class VectorSearchOptions {
     private boolean enableUseANN = false;
     private boolean useIVFPQ = false;
     private boolean useAcorn = false;
+    private boolean useGridHnsw = false;
     private FallbackMode fallbackMode = FallbackMode.NONE;
 
     private String distanceColumnName = "";
@@ -127,6 +128,14 @@ public class VectorSearchOptions {
         this.useAcorn = useAcorn;
     }
 
+    public boolean isUseGridHnsw() {
+        return useGridHnsw;
+    }
+
+    public void setUseGridHnsw(boolean useGridHnsw) {
+        this.useGridHnsw = useGridHnsw;
+    }
+
     public void setAcornRadiusPredicate(double centerLat, double centerLng, double radiusMeters,
                                         String latColumn, String lngColumn) {
         this.acornPredicateType = AcornPredicateType.RADIUS;
@@ -178,6 +187,21 @@ public class VectorSearchOptions {
                 }
             }
         }
+        if (useGridHnsw) {
+            queryParams.put("index_type", "grid_hnsw");
+            if (acornPredicateType != AcornPredicateType.NONE) {
+                queryParams.put("grid_predicate_type", acornPredicateType.name());
+                queryParams.put("grid_lat_column", acornLatColumn);
+                queryParams.put("grid_lng_column", acornLngColumn);
+                if (acornPredicateType == AcornPredicateType.RADIUS) {
+                    queryParams.put("grid_predicate_center_lat", String.valueOf(acornCenterLat));
+                    queryParams.put("grid_predicate_center_lng", String.valueOf(acornCenterLng));
+                    queryParams.put("grid_predicate_radius_m", String.valueOf(acornRadiusMeters));
+                } else if (acornPredicateType == AcornPredicateType.POLYGON) {
+                    queryParams.put("grid_predicate_wkt", acornWkt);
+                }
+            }
+        }
         if (!queryParams.isEmpty()) {
             opts.setQuery_params(queryParams);
         }
@@ -200,6 +224,17 @@ public class VectorSearchOptions {
         sb.append("Predicate Range: ").append(predicateRange);
         if (useAcorn) {
             sb.append(", ACORN: ON");
+            if (acornPredicateType == AcornPredicateType.RADIUS) {
+                sb.append(", Spatial Predicate: RADIUS(")
+                        .append(acornCenterLat).append(", ")
+                        .append(acornCenterLng).append(", ")
+                        .append(acornRadiusMeters).append("m)");
+            } else if (acornPredicateType == AcornPredicateType.POLYGON) {
+                sb.append(", Spatial Predicate: POLYGON");
+            }
+        }
+        if (useGridHnsw) {
+            sb.append(", GRID_HNSW: ON");
             if (acornPredicateType == AcornPredicateType.RADIUS) {
                 sb.append(", Spatial Predicate: RADIUS(")
                         .append(acornCenterLat).append(", ")

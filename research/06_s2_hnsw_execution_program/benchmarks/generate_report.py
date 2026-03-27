@@ -34,16 +34,18 @@ except ImportError:
     print("  pip3 install matplotlib numpy")
     sys.exit(1)
 
-MODE_ORDER = ["b0", "b2", "acorn"]
+MODE_ORDER = ["b0", "b2", "acorn", "grid"]
 MODE_LABELS = {
     "b0": "B0: Brute Force",
     "b2": "B2: HNSW Fallback",
     "acorn": "ACORN-1",
+    "grid": "Grid-HNSW",
 }
 MODE_COLORS = {
     "b0": "#6c757d",
     "b2": "#0d6efd",
     "acorn": "#198754",
+    "grid": "#dc3545",
 }
 
 QUERY_LABELS = {
@@ -372,6 +374,27 @@ def generate_analysis(data_table, available_modes):
                 "spatial constraints.</p>"
             )
 
+    has_grid = "grid" in available_modes
+    if has_grid:
+        grid_recalls = [
+            r["grid"]["recall"] for r in data_table if r.get("grid", {}).get("recall") is not None
+        ]
+        avg_grid_recall = sum(grid_recalls) / len(grid_recalls) if grid_recalls else 0
+        grid_speedups = [r["grid"]["speedup"] for r in data_table]
+        avg_grid_speedup = sum(grid_speedups) / len(grid_speedups) if grid_speedups else 0
+
+        sections.append(
+            "<h2>Grid-HNSW Performance Summary</h2>"
+            "<ul>"
+            f"<li><strong>Average Recall@K:</strong> {avg_grid_recall:.3f}</li>"
+            f"<li><strong>Average Speedup vs Brute Force:</strong> {avg_grid_speedup:.2f}x</li>"
+            "</ul>"
+            "<p>Grid-HNSW partitions vectors by S2 cell at write time and builds a "
+            "per-cell HNSW index. At query time, only cells overlapping the spatial "
+            "predicate are searched, which reduces the search space proportionally to "
+            "the geographic selectivity.</p>"
+        )
+
     sections.append(
         "<h2>Selectivity Impact</h2>"
         "<p>Query types vary in spatial selectivity:</p>"
@@ -463,7 +486,7 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
 <body>
 <div class="container">
   <h1>Spatial-Vector Benchmark Report</h1>
-  <p class="subtitle">B0 (Brute Force) vs B2 (HNSW Fallback) vs ACORN-1 &mdash; Generated {timestamp}</p>
+  <p class="subtitle">B0 (Brute Force) vs B2 (HNSW Fallback) vs ACORN-1 vs Grid-HNSW &mdash; Generated {timestamp}</p>
 
   <div class="meta">
     <div class="meta-item"><strong>Rows:</strong> {rows:,}</div>

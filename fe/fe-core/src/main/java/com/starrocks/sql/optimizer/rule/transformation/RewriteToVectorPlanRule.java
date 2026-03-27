@@ -117,12 +117,20 @@ public class RewriteToVectorPlanRule extends TransformationRule {
 
         String indexType = info.index.getProperties().get(VectorIndexParams.CommonIndexParamKey.INDEX_TYPE.name().toLowerCase());
         boolean isAcorn = VectorIndexParams.VectorIndexType.ACORN.name().equalsIgnoreCase(indexType);
+        boolean isGridHnsw = VectorIndexParams.VectorIndexType.GRID_HNSW.name().equalsIgnoreCase(indexType);
 
         ScalarOperator predicate = scanOp.getPredicate();
         if (predicate != null) {
             if (containsSupportedSpatialPredicate(predicate)) {
                 if (isAcorn) {
                     opts.setUseAcorn(true);
+                    extractAcornSpatialParams(predicate, scanOp, opts);
+                    opts.setEnableUseANN(true);
+                    opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
+                    return List.of(rewriteOptByDistanceColumn(topNOp, scanOp, context, predicate, info, opts));
+                }
+                if (isGridHnsw) {
+                    opts.setUseGridHnsw(true);
                     extractAcornSpatialParams(predicate, scanOp, opts);
                     opts.setEnableUseANN(true);
                     opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -145,6 +153,9 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         opts.setEnableUseANN(true);
         if (isAcorn) {
             opts.setUseAcorn(true);
+        }
+        if (isGridHnsw) {
+            opts.setUseGridHnsw(true);
         }
         opts.setUseIVFPQ(VectorIndexParams.VectorIndexType.IVFPQ.name().equalsIgnoreCase(indexType));
         opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
