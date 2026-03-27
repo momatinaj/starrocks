@@ -195,31 +195,51 @@ Status SegmentWriter::init(const std::vector<uint32_t>& column_indexes, bool has
             auto sp_it = vec_idx.index_properties().find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
             if (sp_it != vec_idx.index_properties().end() && sp_it->second == "true") {
                 const auto& idx_props = vec_idx.index_properties();
-                auto lat_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLatColumnUid);
-                auto lng_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLngColumnUid);
-                if (lat_it != idx_props.end() && lng_it != idx_props.end()) {
-                    int32_t lat_uid = std::stoi(lat_it->second);
-                    int32_t lng_uid = std::stoi(lng_it->second);
-                    int32_t lat_idx = -1, lng_idx = -1;
+                int32_t lat_uid = -1, lng_uid = -1;
+                int32_t lat_idx = -1, lng_idx = -1;
+
+                auto lat_uid_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLatColumnUid);
+                auto lng_uid_it = idx_props.find(SpatialIndexPropertyKeys::kSpatialLngColumnUid);
+                if (lat_uid_it != idx_props.end() && lng_uid_it != idx_props.end()) {
+                    lat_uid = std::stoi(lat_uid_it->second);
+                    lng_uid = std::stoi(lng_uid_it->second);
+                } else {
+                    // Fallback: resolve lat/lng column names to UIDs via tablet schema.
+                    // The FE stores lat_column/lng_column as column names; the BE needs UIDs.
+                    auto lat_name_it = idx_props.find("lat_column");
+                    auto lng_name_it = idx_props.find("lng_column");
+                    if (lat_name_it != idx_props.end() && lng_name_it != idx_props.end()) {
+                        for (size_t j = 0; j < _column_indexes.size(); j++) {
+                            const auto& col = _tablet_schema->column(_column_indexes[j]);
+                            if (col.name() == lat_name_it->second) lat_uid = col.unique_id();
+                            if (col.name() == lng_name_it->second) lng_uid = col.unique_id();
+                        }
+                    }
+                }
+
+                if (lat_uid >= 0 && lng_uid >= 0) {
                     for (size_t j = 0; j < _column_indexes.size(); j++) {
                         int32_t uid = _tablet_schema->column(_column_indexes[j]).unique_id();
                         if (uid == lat_uid) lat_idx = static_cast<int32_t>(j);
                         if (uid == lng_uid) lng_idx = static_cast<int32_t>(j);
                     }
-                    if (lat_idx >= 0 && lng_idx >= 0) {
-                        _spatial_vector_col_writer_idx = static_cast<int32_t>(i);
-                        _spatial_lat_col_writer_idx = lat_idx;
-                        _spatial_lng_col_writer_idx = lng_idx;
-                        auto level_it = idx_props.find(SpatialIndexPropertyKeys::kS2Level);
-                        _spatial_s2_level = level_it != idx_props.end() ? std::stoi(level_it->second)
-                                                                       : kS2DefaultPartitionLevel;
-                        auto spatial_ti = std::make_shared<TabletIndex>(vec_idx);
-                        _spatial_vector_writer = std::make_unique<SpatialVectorIndexWriter>(
-                                spatial_ti, _opts.segment_file_mark.rowset_path_prefix,
-                                _opts.segment_file_mark.rowset_id, _segment_id, true);
-                        RETURN_IF_ERROR(_spatial_vector_writer->init());
-                        opts.need_vector_index = false;
-                    }
+                }
+
+                if (lat_idx >= 0 && lng_idx >= 0) {
+                    _spatial_vector_col_writer_idx = static_cast<int32_t>(i);
+                    _spatial_lat_col_writer_idx = lat_idx;
+                    _spatial_lng_col_writer_idx = lng_idx;
+                    auto level_it = idx_props.find(SpatialIndexPropertyKeys::kS2Level);
+                    _spatial_s2_level = level_it != idx_props.end() ? std::stoi(level_it->second)
+                                                                   : kS2DefaultPartitionLevel;
+                    auto spatial_ti = std::make_shared<TabletIndex>(vec_idx);
+                    _spatial_vector_writer = std::make_unique<SpatialVectorIndexWriter>(
+                            spatial_ti, _opts.segment_file_mark.rowset_path_prefix,
+                            _opts.segment_file_mark.rowset_id, _segment_id, true);
+                    RETURN_IF_ERROR(_spatial_vector_writer->init());
+                    opts.need_vector_index = false;
+                    LOG(INFO) << "SpatialVectorIndexWriter created: lat_uid=" << lat_uid
+                              << " lng_uid=" << lng_uid << " s2_level=" << _spatial_s2_level;
                 }
             }
         }

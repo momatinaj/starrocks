@@ -753,30 +753,50 @@ Status SegmentIterator::_init_ann_reader() {
             auto st = _vector_index_ctx->acorn_reader->init(index_path);
             if (st.ok() && _vector_index_ctx->acorn_reader->is_valid()) {
                 auto pred_spec = AcornPredicateSpec::from_query_params(_vector_index_ctx->query_params);
+                LOG(INFO) << "ACORN predicate spec: type=" << static_cast<int>(pred_spec.type)
+                          << " lat_col=" << pred_spec.lat_column_name
+                          << " lng_col=" << pred_spec.lng_column_name
+                          << " query_params has acorn_predicate_type="
+                          << (_vector_index_ctx->query_params.count("acorn_predicate_type") ? "yes" : "no");
                 if (pred_spec.type != AcornPredicateSpec::NONE) {
                     auto evaluator = create_predicate_evaluator(pred_spec);
                     if (evaluator) {
                         std::vector<double> lat_data, lng_data;
                         st = _load_double_column(pred_spec.lat_column_name, &lat_data);
+                        LOG(INFO) << "ACORN _load_double_column('" << pred_spec.lat_column_name
+                                  << "'): " << st.to_string() << " rows=" << lat_data.size();
                         if (st.ok()) {
                             st = _load_double_column(pred_spec.lng_column_name, &lng_data);
+                            LOG(INFO) << "ACORN _load_double_column('" << pred_spec.lng_column_name
+                                      << "'): " << st.to_string() << " rows=" << lng_data.size();
                         }
                         if (st.ok()) {
                             st = evaluator->init(pred_spec, lat_data, lng_data);
+                            LOG(INFO) << "ACORN evaluator->init: " << st.to_string();
                         }
                         if (st.ok()) {
                             _vector_index_ctx->acorn_reader->set_predicate_evaluator(std::move(evaluator));
+                            LOG(INFO) << "ACORN predicate evaluator SET successfully";
                         } else {
                             LOG(WARNING) << "ACORN predicate evaluator init failed: " << st.to_string()
                                          << ", falling back to predicate-free ACORN search";
                         }
+                    } else {
+                        LOG(WARNING) << "ACORN create_predicate_evaluator returned nullptr for type="
+                                     << static_cast<int>(pred_spec.type);
                     }
+                } else {
+                    LOG(INFO) << "ACORN predicate spec type=NONE, no spatial predicate in query";
                 }
+                LOG(INFO) << "ACORN reader ready: has_predicate=" << _vector_index_ctx->acorn_reader->has_predicate()
+                          << " num_nodes=" << _vector_index_ctx->acorn_reader->num_nodes();
                 return Status::OK();
             }
+            LOG(WARNING) << "ACORN reader init failed or invalid: " << st.to_string();
             _vector_index_ctx->acorn_reader.reset();
+        } else {
+            LOG(WARNING) << "ACORN .vi file not found: " << index_path;
         }
-        // Fall through to standard TenANN reader if ACORN init fails
     }
 
     // Check if this is a spatial-partitioned vector index
@@ -895,13 +915,15 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
         SCOPED_RAW_TIMER(&_opts.stats->vector_search_timer);
 
         if (_vector_index_ctx->use_acorn()) {
-            // ACORN-1 search with optional predicate
             AcornIndexReader::SearchParams acorn_params;
             acorn_params.k = _vector_index_ctx->k;
             bool has_predicate = _vector_index_ctx->acorn_reader->has_predicate();
             acorn_params.ef_search = has_predicate
                     ? std::max(static_cast<int64_t>(400), _vector_index_ctx->k * 40)
                     : std::max(static_cast<int64_t>(40), _vector_index_ctx->k * 4);
+            LOG(INFO) << "ACORN search: k=" << acorn_params.k
+                      << " ef_search=" << acorn_params.ef_search
+                      << " has_predicate=" << has_predicate;
             AcornIndexReader::SearchResult acorn_result;
             st = _vector_index_ctx->acorn_reader->search(
                     _opts.vector_search_option->query_vector.data(), acorn_params, acorn_result);

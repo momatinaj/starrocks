@@ -55,6 +55,9 @@ echo ""
 
 mkdir -p "$OUT"
 
+# Clean up stale B2/A0 result files so the report only shows active modes
+rm -f "$OUT"/b2_*.json "$OUT"/a0_*.json 2>/dev/null
+
 echo ">> Verifying StarRocks is reachable on port $PORT ..."
 if ! mysql -h "$HOST" -P "$PORT" -u root -e "SELECT 1" >/dev/null 2>&1; then
     echo "ERROR: Cannot connect to StarRocks at $HOST:$PORT"
