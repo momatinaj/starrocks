@@ -14,6 +14,8 @@
 
 #include "storage/index/vector/search_predicate_evaluator.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 
@@ -27,7 +29,9 @@ AcornPredicateSpec AcornPredicateSpec::from_query_params(const std::map<std::str
     auto it = params.find(kPredicateType);
     if (it == params.end()) return spec;
 
-    const auto& type_str = it->second;
+    std::string type_str = it->second;
+    std::transform(type_str.begin(), type_str.end(), type_str.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     if (type_str == "radius") {
         spec.type = RADIUS;
         auto lat_it = params.find(kCenterLat);

@@ -338,4 +338,39 @@ TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_radius_missing_fields) 
     ASSERT_DOUBLE_EQ(spec.radius_meters, 0.0);
 }
 
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_uppercase_radius) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kPredicateType] = "RADIUS";
+    params[AcornPredicateSpec::kCenterLat] = "40.7128";
+    params[AcornPredicateSpec::kCenterLng] = "-74.0060";
+    params[AcornPredicateSpec::kRadiusM] = "1000";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::RADIUS);
+    ASSERT_DOUBLE_EQ(spec.center_lat, 40.7128);
+    ASSERT_DOUBLE_EQ(spec.center_lng, -74.0060);
+    ASSERT_DOUBLE_EQ(spec.radius_meters, 1000.0);
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_uppercase_polygon) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kPredicateType] = "POLYGON";
+    params[AcornPredicateSpec::kWkt] = "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::POLYGON);
+    ASSERT_EQ(spec.wkt, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
+}
+
+TEST_F(SearchPredicateEvaluatorTest, test_predicate_spec_mixed_case) {
+    std::map<std::string, std::string> params;
+    params[AcornPredicateSpec::kPredicateType] = "Radius";
+    params[AcornPredicateSpec::kCenterLat] = "0.0";
+    params[AcornPredicateSpec::kCenterLng] = "0.0";
+    params[AcornPredicateSpec::kRadiusM] = "100";
+
+    auto spec = AcornPredicateSpec::from_query_params(params);
+    ASSERT_EQ(spec.type, AcornPredicateSpec::RADIUS);
+}
+
 } // namespace starrocks

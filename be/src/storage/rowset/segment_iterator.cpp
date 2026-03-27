@@ -21,6 +21,7 @@
 
 #include "column/chunk.h"
 #include "column/column_helper.h"
+#include "column/fixed_length_column.h"
 #include "column/datum_tuple.h"
 #include "common/config.h"
 #include "common/status.h"
@@ -347,6 +348,8 @@ private:
     bool need_early_materialize_subfield(const FieldPtr& field);
 
     Status _init_ann_reader();
+
+    Status _load_double_column(const std::string& col_name, std::vector<double>* out);
 
     IndexReadOptions _index_read_options(ColumnId cid) const;
 
@@ -749,12 +752,24 @@ Status SegmentIterator::_init_ann_reader() {
             _vector_index_ctx->acorn_reader = std::make_unique<AcornIndexReader>();
             auto st = _vector_index_ctx->acorn_reader->init(index_path);
             if (st.ok() && _vector_index_ctx->acorn_reader->is_valid()) {
-                // Parse ACORN predicate spec from query params
                 auto pred_spec = AcornPredicateSpec::from_query_params(_vector_index_ctx->query_params);
                 if (pred_spec.type != AcornPredicateSpec::NONE) {
                     auto evaluator = create_predicate_evaluator(pred_spec);
                     if (evaluator) {
-                        _vector_index_ctx->acorn_reader->set_predicate_evaluator(std::move(evaluator));
+                        std::vector<double> lat_data, lng_data;
+                        st = _load_double_column(pred_spec.lat_column_name, &lat_data);
+                        if (st.ok()) {
+                            st = _load_double_column(pred_spec.lng_column_name, &lng_data);
+                        }
+                        if (st.ok()) {
+                            st = evaluator->init(pred_spec, lat_data, lng_data);
+                        }
+                        if (st.ok()) {
+                            _vector_index_ctx->acorn_reader->set_predicate_evaluator(std::move(evaluator));
+                        } else {
+                            LOG(WARNING) << "ACORN predicate evaluator init failed: " << st.to_string()
+                                         << ", falling back to predicate-free ACORN search";
+                        }
                     }
                 }
                 return Status::OK();
@@ -796,6 +811,51 @@ Status SegmentIterator::_init_ann_reader() {
 #else
     return Status::OK();
 #endif
+}
+
+Status SegmentIterator::_load_double_column(const std::string& col_name, std::vector<double>* out) {
+    const auto& schema = _segment->tablet_schema();
+    size_t col_idx = schema.field_index(col_name);
+    if (col_idx >= schema.num_columns()) {
+        return Status::NotFound(fmt::format("Column '{}' not found in segment schema", col_name));
+    }
+    const auto& col = schema.column(col_idx);
+
+    ASSIGN_OR_RETURN(auto col_iter, _segment->new_column_iterator_or_default(col, nullptr));
+
+    ColumnIteratorOptions iter_opts;
+    iter_opts.stats = _opts.stats;
+    iter_opts.use_page_cache = _opts.use_page_cache;
+    iter_opts.temporary_data = _opts.temporary_data;
+    iter_opts.reader_type = _opts.reader_type;
+
+    RandomAccessFileOptions fa_opts;
+    const auto encryption_info = _segment->encryption_info();
+    if (encryption_info) {
+        fa_opts.encryption_info = *encryption_info;
+    }
+    ASSIGN_OR_RETURN(auto rfile, _opts.fs->new_random_access_file(fa_opts, _segment->file_info()));
+    iter_opts.read_file = rfile.get();
+
+    RETURN_IF_ERROR(col_iter->init(iter_opts));
+    RETURN_IF_ERROR(col_iter->seek_to_ordinal(0));
+
+    uint32_t total_rows = _segment->num_rows();
+    out->resize(total_rows);
+
+    auto double_col = DoubleColumn::create();
+    constexpr size_t kBatch = 4096;
+    uint32_t read_so_far = 0;
+    while (read_so_far < total_rows) {
+        double_col->reset_column();
+        size_t to_read = std::min(static_cast<size_t>(total_rows - read_so_far), kBatch);
+        RETURN_IF_ERROR(col_iter->next_batch(&to_read, double_col.get()));
+        const auto* raw = double_col->get_data().data();
+        std::copy(raw, raw + to_read, out->data() + read_so_far);
+        read_so_far += to_read;
+    }
+
+    return Status::OK();
 }
 
 Status SegmentIterator::_get_row_ranges_by_vector_index() {
