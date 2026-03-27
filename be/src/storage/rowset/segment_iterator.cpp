@@ -51,6 +51,7 @@
 #include "storage/index/vector/vector_search_option.h"
 #include "geo/s2_cell_utils.h"
 #include "geo/geo_types.h"
+#include <s2/s2polygon.h>
 #include "storage/lake/update_manager.h"
 #include "storage/projection_iterator.h"
 #include "storage/range.h"
