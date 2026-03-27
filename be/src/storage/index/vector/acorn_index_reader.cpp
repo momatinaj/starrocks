@@ -61,7 +61,10 @@ std::vector<AcornIndexReader::node_id_t> AcornIndexReader::_get_neighbors_acorn(
         return _graph.neighbors(node_id, level);
     }
 
-    // ACORN-1: 2-hop expansion + predicate filter
+    // ACORN-1: 2-hop expansion + predicate filter.
+    // Per the ACORN paper, 2-hop expansion compensates for neighbor loss due to
+    // predicate filtering, so we do NOT truncate to M -- the full qualifying
+    // neighbor set is returned to give the search more paths to explore.
     auto expanded = _graph.expanded_neighbors(node_id, level);
 
     std::vector<node_id_t> filtered;
@@ -70,13 +73,6 @@ std::vector<AcornIndexReader::node_id_t> AcornIndexReader::_get_neighbors_acorn(
         if (_predicate->evaluate(n)) {
             filtered.push_back(n);
         }
-    }
-
-    // Truncate to M neighbors (graph degree bound)
-    int M = _graph.M();
-    int max_neighbors = (level == 0) ? 2 * M : M;
-    if (static_cast<int>(filtered.size()) > max_neighbors) {
-        filtered.resize(max_neighbors);
     }
 
     return filtered;

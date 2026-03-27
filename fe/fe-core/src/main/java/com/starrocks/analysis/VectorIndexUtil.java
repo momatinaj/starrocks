@@ -132,9 +132,17 @@ public class VectorIndexUtil {
         // check whether index and search params define with wrong index type
         configIndexParams.removeAll(Optional.ofNullable(indexParamsGroupByType.get(paramValidationType))
                 .orElse(Collections.emptySet()));
+        if (vectorIndexType != paramValidationType) {
+            configIndexParams.removeAll(Optional.ofNullable(indexParamsGroupByType.get(vectorIndexType))
+                    .orElse(Collections.emptySet()));
+        }
 
         configSearchParams.removeAll(Optional.ofNullable(searchParamsGroupByType.get(paramValidationType))
                 .orElse(Collections.emptySet()));
+        if (vectorIndexType != paramValidationType) {
+            configSearchParams.removeAll(Optional.ofNullable(searchParamsGroupByType.get(vectorIndexType))
+                    .orElse(Collections.emptySet()));
+        }
 
         if (!configIndexParams.isEmpty()) {
             throw new SemanticException(String.format("Index params %s should not define with %s", configIndexParams,
@@ -173,7 +181,12 @@ public class VectorIndexUtil {
         }
 
         // add default properties
-        Set<String> indexParams = indexParamsGroupByType.get(paramValidationType);
+        Set<String> indexParams = new HashSet<>(Optional.ofNullable(indexParamsGroupByType.get(paramValidationType))
+                .orElse(Collections.emptySet()));
+        if (vectorIndexType != paramValidationType) {
+            indexParams.addAll(Optional.ofNullable(indexParamsGroupByType.get(vectorIndexType))
+                    .orElse(Collections.emptySet()));
+        }
         paramsNeedDefault.keySet().removeIf(key -> !indexParams.contains(key));
         if (!paramsNeedDefault.isEmpty()) {
             addDefaultProperties(properties, paramsNeedDefault);

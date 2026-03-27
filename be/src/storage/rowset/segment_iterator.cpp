@@ -898,7 +898,10 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
             // ACORN-1 search with optional predicate
             AcornIndexReader::SearchParams acorn_params;
             acorn_params.k = _vector_index_ctx->k;
-            acorn_params.ef_search = std::max(static_cast<int64_t>(40), _vector_index_ctx->k * 4);
+            bool has_predicate = _vector_index_ctx->acorn_reader->has_predicate();
+            acorn_params.ef_search = has_predicate
+                    ? std::max(static_cast<int64_t>(400), _vector_index_ctx->k * 40)
+                    : std::max(static_cast<int64_t>(40), _vector_index_ctx->k * 4);
             AcornIndexReader::SearchResult acorn_result;
             st = _vector_index_ctx->acorn_reader->search(
                     _opts.vector_search_option->query_vector.data(), acorn_params, acorn_result);

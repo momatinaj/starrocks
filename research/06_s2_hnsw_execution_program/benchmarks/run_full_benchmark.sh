@@ -90,6 +90,31 @@ if echo "$ACORN_CHECK" | grep -qi "must in"; then
     exit 1
 fi
 echo "   OK"
+
+echo ">> Checking GRID_HNSW index type support..."
+GRID_CHECK=$(mysql -h "$HOST" -P "$PORT" -u root -N -e "
+  CREATE DATABASE IF NOT EXISTS __grid_check;
+  USE __grid_check;
+  DROP TABLE IF EXISTS __grid_probe;
+  CREATE TABLE __grid_probe (
+    id BIGINT NOT NULL,
+    lat DOUBLE NOT NULL,
+    lng DOUBLE NOT NULL,
+    v ARRAY<FLOAT> NOT NULL,
+    INDEX vi (v) USING VECTOR(\"index_type\"=\"grid_hnsw\",\"dim\"=\"4\",\"metric_type\"=\"l2_distance\",\"is_vector_normed\"=\"false\",\"M\"=\"16\",\"efconstruction\"=\"40\",\"s2_level\"=\"12\",\"lat_column\"=\"lat\",\"lng_column\"=\"lng\")
+  ) ENGINE=OLAP DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\");
+  DROP TABLE IF EXISTS __grid_probe;
+  DROP DATABASE __grid_check;
+" 2>&1) || true
+if echo "$GRID_CHECK" | grep -qi "error\|must in\|should not"; then
+    echo ""
+    echo "ERROR: The running FE does not support index_type=GRID_HNSW."
+    echo "       Rebuild the FE with the latest code."
+    echo "       Error: $GRID_CHECK"
+    echo ""
+    exit 1
+fi
+echo "   OK"
 echo ""
 
 echo "============================================================"

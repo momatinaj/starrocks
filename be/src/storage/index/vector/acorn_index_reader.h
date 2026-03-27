@@ -67,6 +67,7 @@ public:
     Status search(const float* query_vector, const SearchParams& params, SearchResult& result);
 
     bool is_valid() const { return _graph.is_valid(); }
+    bool has_predicate() const { return _predicate != nullptr; }
     int num_nodes() const { return _graph.num_nodes(); }
     int dimension() const { return _dim; }
 
