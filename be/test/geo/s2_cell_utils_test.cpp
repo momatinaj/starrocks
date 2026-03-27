@@ -279,7 +279,6 @@ TEST_F(S2CellUtilsTest, covering_general_s2region_matches_cap) {
 }
 
 TEST_F(S2CellUtilsTest, covering_polygon_region) {
-    // Build an S2Polygon from a simple square and verify covering
     std::vector<S2Point> pts;
     pts.push_back(S2LatLng::FromDegrees(39.8, 116.2).ToPoint());
     pts.push_back(S2LatLng::FromDegrees(39.8, 116.4).ToPoint());
@@ -294,6 +293,21 @@ TEST_F(S2CellUtilsTest, covering_polygon_region) {
 
     uint64_t center_cell = s2_cell_id_from_latlng(39.9, 116.3, 12);
     ASSERT_NE(std::find(covering.begin(), covering.end(), center_cell), covering.end());
+}
+
+TEST_F(S2CellUtilsTest, covering_polygon_wkt) {
+    std::string wkt = "POLYGON((116.2 39.8, 116.4 39.8, 116.4 40.0, 116.2 40.0, 116.2 39.8))";
+    auto covering = s2_covering_cell_ids_for_polygon_wkt(wkt, 12, 64);
+    ASSERT_FALSE(covering.empty());
+
+    uint64_t center_cell = s2_cell_id_from_latlng(39.9, 116.3, 12);
+    ASSERT_NE(std::find(covering.begin(), covering.end(), center_cell), covering.end());
+}
+
+TEST_F(S2CellUtilsTest, covering_polygon_wkt_invalid) {
+    ASSERT_TRUE(s2_covering_cell_ids_for_polygon_wkt("", 12).empty());
+    ASSERT_TRUE(s2_covering_cell_ids_for_polygon_wkt("not a polygon", 12).empty());
+    ASSERT_TRUE(s2_covering_cell_ids_for_polygon_wkt("POINT(116.3 39.9)", 12).empty());
 }
 
 // ==================== Partition distribution ====================

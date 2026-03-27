@@ -50,8 +50,6 @@
 #include "storage/index/vector/search_predicate_evaluator.h"
 #include "storage/index/vector/vector_search_option.h"
 #include "geo/s2_cell_utils.h"
-#include "geo/geo_types.h"
-#include <s2/s2polygon.h>
 #include "storage/lake/update_manager.h"
 #include "storage/projection_iterator.h"
 #include "storage/range.h"
@@ -799,7 +797,7 @@ Status SegmentIterator::_init_ann_reader() {
                 auto pt_it = qp.find("grid_predicate_type");
                 if (pt_it != qp.end()) {
                     std::string pred_type = pt_it->second;
-                    std::transform(pred_type.begin(), pred_type.end(), pred_type.begin(), ::tolower);
+                    for (auto& c : pred_type) c = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
                     if (pred_type == "radius") {
                         double lat = std::stod(qp.at("grid_predicate_center_lat"));
                         double lng = std::stod(qp.at("grid_predicate_center_lng"));
@@ -807,14 +805,8 @@ Status SegmentIterator::_init_ann_reader() {
                         _vector_index_ctx->query_cell_ids =
                                 s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level);
                     } else if (pred_type == "polygon") {
-                        std::string wkt = qp.at("grid_predicate_wkt");
-                        GeoParseStatus geo_status;
-                        std::unique_ptr<GeoShape> shape(GeoShape::from_wkt(wkt.data(), wkt.size(), &geo_status));
-                        if (shape && shape->type() == GEO_SHAPE_POLYGON) {
-                            auto* poly = static_cast<GeoPolygon*>(shape.get());
-                            _vector_index_ctx->query_cell_ids =
-                                    s2_covering_cell_ids(*poly->polygon(), s2_level);
-                        }
+                        _vector_index_ctx->query_cell_ids =
+                                s2_covering_cell_ids_for_polygon_wkt(qp.at("grid_predicate_wkt"), s2_level);
                     }
                 }
                 if (_vector_index_ctx->query_cell_ids.empty()) {

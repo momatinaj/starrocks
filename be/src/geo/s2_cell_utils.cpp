@@ -19,10 +19,13 @@
 #include <s2/s2cell_id.h>
 #include <s2/s2earth.h>
 #include <s2/s2latlng.h>
+#include <s2/s2polygon.h>
 #include <s2/s2region_coverer.h>
 
 #include <algorithm>
 #include <cmath>
+
+#include "geo/geo_types.h"
 
 namespace starrocks {
 
@@ -85,6 +88,26 @@ std::vector<uint64_t> s2_covering_cell_ids(const S2Region& region, int level, in
         result.push_back(cell_id.id());
     }
     return result;
+}
+
+std::vector<uint64_t> s2_covering_cell_ids_for_polygon_wkt(const std::string& wkt, int level, int max_cells) {
+    if (wkt.empty() || !s2_is_valid_level(level)) {
+        return {};
+    }
+
+    GeoParseStatus status;
+    std::unique_ptr<GeoShape> shape(GeoShape::from_wkt(wkt.data(), wkt.size(), &status));
+    if (!shape || shape->type() != GEO_SHAPE_POLYGON) {
+        return {};
+    }
+
+    auto* geo_polygon = static_cast<GeoPolygon*>(shape.get());
+    const S2Polygon* s2_poly = geo_polygon->polygon();
+    if (!s2_poly) {
+        return {};
+    }
+
+    return s2_covering_cell_ids(*s2_poly, level, max_cells);
 }
 
 } // namespace starrocks

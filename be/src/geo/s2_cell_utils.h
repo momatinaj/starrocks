@@ -56,6 +56,13 @@ std::vector<uint64_t> s2_covering_cell_ids_for_cap(double center_lat_degrees, do
 // other complex region.
 std::vector<uint64_t> s2_covering_cell_ids(const S2Region& region, int level, int max_cells = 8);
 
+// Return the set of S2 cell IDs at `level` that cover the polygon described
+// by a WKT string (e.g. "POLYGON((lng1 lat1, lng2 lat2, ...))").
+// Returns an empty vector if the WKT is invalid or not a polygon.
+// This function is safe to call from code that cannot include S2 headers
+// directly (e.g. segment_iterator.cpp).
+std::vector<uint64_t> s2_covering_cell_ids_for_polygon_wkt(const std::string& wkt, int level, int max_cells = 8);
+
 // Validate that an S2 level is within [0, 30].
 inline bool s2_is_valid_level(int level) {
     return level >= kS2MinLevel && level <= kS2MaxLevel;
