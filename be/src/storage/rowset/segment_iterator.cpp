@@ -777,7 +777,6 @@ Status SegmentIterator::_init_ann_reader() {
                     tablet_index_meta, _vector_index_ctx->query_params));
 
             if (_vector_index_ctx->spatial_reader->is_valid()) {
-                int s2_level = _vector_index_ctx->spatial_reader->manifest().s2_level();
                 // Compute query cell IDs: search ALL partitions for MVP
                 // (spatial predicate filtering can be added later)
                 const auto& partitions = _vector_index_ctx->spatial_reader->manifest().partitions();
@@ -822,7 +821,7 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
             // ACORN-1 search with optional predicate
             AcornIndexReader::SearchParams acorn_params;
             acorn_params.k = _vector_index_ctx->k;
-            acorn_params.ef_search = std::max(40, _vector_index_ctx->k * 4);
+            acorn_params.ef_search = std::max(static_cast<int64_t>(40), _vector_index_ctx->k * 4);
             AcornIndexReader::SearchResult acorn_result;
             st = _vector_index_ctx->acorn_reader->search(
                     _opts.vector_search_option->query_vector.data(), acorn_params, acorn_result);
