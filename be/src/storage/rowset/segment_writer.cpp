@@ -204,16 +204,27 @@ Status SegmentWriter::init(const std::vector<uint32_t>& column_indexes, bool has
                     lat_uid = std::stoi(lat_uid_it->second);
                     lng_uid = std::stoi(lng_uid_it->second);
                 } else {
-                    // Fallback: resolve lat/lng column names to UIDs via tablet schema.
-                    // The FE stores lat_column/lng_column as column names; the BE needs UIDs.
                     auto lat_name_it = idx_props.find("lat_column");
                     auto lng_name_it = idx_props.find("lng_column");
                     if (lat_name_it != idx_props.end() && lng_name_it != idx_props.end()) {
+                        LOG(INFO) << "Grid-HNSW: resolving lat_column='" << lat_name_it->second
+                                  << "' lng_column='" << lng_name_it->second << "' to UIDs via schema";
                         for (size_t j = 0; j < _column_indexes.size(); j++) {
                             const auto& col = _tablet_schema->column(_column_indexes[j]);
                             if (col.name() == lat_name_it->second) lat_uid = col.unique_id();
                             if (col.name() == lng_name_it->second) lng_uid = col.unique_id();
                         }
+                        if (lat_uid < 0 || lng_uid < 0) {
+                            LOG(WARNING) << "Grid-HNSW: failed to resolve column UIDs:"
+                                         << " lat_uid=" << lat_uid << " lng_uid=" << lng_uid
+                                         << " (searched " << _column_indexes.size() << " columns)";
+                        }
+                    } else {
+                        LOG(WARNING) << "Grid-HNSW: is_spatial_partitioned=true but lat_column/lng_column"
+                                     << " not found in index_properties (lat_column "
+                                     << (lat_name_it != idx_props.end() ? "found" : "MISSING")
+                                     << ", lng_column "
+                                     << (lng_name_it != idx_props.end() ? "found" : "MISSING") << ")";
                     }
                 }
 
@@ -233,6 +244,10 @@ Status SegmentWriter::init(const std::vector<uint32_t>& column_indexes, bool has
                     _spatial_s2_level = level_it != idx_props.end() ? std::stoi(level_it->second)
                                                                    : kS2DefaultPartitionLevel;
                     auto spatial_ti = std::make_shared<TabletIndex>(vec_idx);
+                    spatial_ti->add_index_properties(SpatialIndexPropertyKeys::kSpatialLatColumnUid,
+                                                     std::to_string(lat_uid));
+                    spatial_ti->add_index_properties(SpatialIndexPropertyKeys::kSpatialLngColumnUid,
+                                                     std::to_string(lng_uid));
                     _spatial_vector_writer = std::make_unique<SpatialVectorIndexWriter>(
                             spatial_ti, _opts.segment_file_mark.rowset_path_prefix,
                             _opts.segment_file_mark.rowset_id, _segment_id, true);

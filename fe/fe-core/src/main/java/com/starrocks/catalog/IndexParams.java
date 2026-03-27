@@ -73,6 +73,8 @@ public class IndexParams {
                 null, null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.LNG_COLUMN, false, false,
                 null, null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.IS_SPATIAL_PARTITIONED,
+                false, true, "true", null);
 
         // search
         register(builder, IndexType.VECTOR, IndexParamType.SEARCH, VectorIndexParams.SearchParamsKey.EFSEARCH, false, false, null,

@@ -177,6 +177,15 @@ public class VectorIndexParams {
                     throw new SemanticException("Value of `LNG_COLUMN` must be a non-empty column name");
                 }
             }
+        },
+
+        IS_SPATIAL_PARTITIONED(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw new SemanticException("Value of `IS_SPATIAL_PARTITIONED` must be `true` or `false`");
+                }
+            }
         };
 
         private final VectorIndexType belongVectorIndexType;

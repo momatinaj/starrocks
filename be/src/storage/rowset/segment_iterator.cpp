@@ -802,9 +802,18 @@ Status SegmentIterator::_init_ann_reader() {
     // Check if this is a spatial-partitioned vector index
     const auto& idx_props = tablet_index_meta->index_properties();
     auto sp_it = idx_props.find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
+    {
+        auto sp_extra = tablet_index_meta->extra_properties().find(SpatialIndexPropertyKeys::kIsSpatialPartitioned);
+        LOG(INFO) << "Grid-HNSW read check: is_spatial_partitioned in index_properties="
+                  << (sp_it != idx_props.end() ? sp_it->second : "NOT_FOUND")
+                  << " in extra_properties="
+                  << (sp_extra != tablet_index_meta->extra_properties().end() ? sp_extra->second : "NOT_FOUND");
+    }
     if (sp_it != idx_props.end() && sp_it->second == "true") {
         std::string manifest_path = IndexDescriptor::partition_manifest_file_path(
                 _opts.rowset_path, _opts.rowsetid.to_string(), segment_id(), tablet_index_meta->index_id());
+        LOG(INFO) << "Grid-HNSW: checking manifest at " << manifest_path
+                  << " exists=" << fs::path_exist(manifest_path);
         if (fs::path_exist(manifest_path)) {
             _vector_index_ctx->spatial_reader = std::make_unique<SpatialVectorIndexReader>();
             RETURN_IF_ERROR(_vector_index_ctx->spatial_reader->init(
