@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Full benchmark: B0 (brute force) vs B2 (HNSW fallback) vs ACORN-1
-# Runs all three modes sequentially on the custom StarRocks cluster,
+# Full benchmark: B0 (brute force) vs ACORN-1 vs Grid-HNSW
+# Runs all modes sequentially on the custom StarRocks cluster,
 # then prints a side-by-side comparison table.
 #
 # Usage:
@@ -43,7 +43,7 @@ done
 COMMON_ARGS="--host $HOST --port $PORT --rows $ROWS --dim $DIM --k $K --queries $QUERIES --warmup $WARMUP --output $OUT $SKIP_LOAD"
 
 echo "============================================================"
-echo " Full Benchmark: B0 vs B2 vs ACORN-1 vs Grid-HNSW"
+echo " Full Benchmark: B0 vs ACORN-1 vs Grid-HNSW"
 echo "============================================================"
 echo "  Host:    $HOST:$PORT"
 echo "  Rows:    $ROWS"
@@ -118,25 +118,19 @@ echo "   OK"
 echo ""
 
 echo "============================================================"
-echo " [1/4] B0 -- Brute Force (Ground Truth)"
+echo " [1/3] B0 -- Brute Force (Ground Truth)"
 echo "============================================================"
 python3 "$BENCH" --mode b0 $COMMON_ARGS
 echo ""
 
 echo "============================================================"
-echo " [2/4] B2 -- HNSW + Planner Fallback"
-echo "============================================================"
-python3 "$BENCH" --mode b2 $COMMON_ARGS
-echo ""
-
-echo "============================================================"
-echo " [3/4] ACORN -- ACORN-1 Predicate-Aware Search"
+echo " [2/3] ACORN -- ACORN-1 Predicate-Aware Search"
 echo "============================================================"
 python3 "$BENCH" --mode acorn $COMMON_ARGS
 echo ""
 
 echo "============================================================"
-echo " [4/4] GRID -- Grid-HNSW Spatially Partitioned Search"
+echo " [3/3] GRID -- Grid-HNSW Spatially Partitioned Search"
 echo "============================================================"
 python3 "$BENCH" --mode grid $COMMON_ARGS
 echo ""

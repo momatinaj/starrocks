@@ -16,11 +16,9 @@ import os
 import sys
 from collections import defaultdict
 
-MODE_ORDER = ["b0", "a0", "b2", "acorn", "grid"]
+MODE_ORDER = ["b0", "acorn", "grid"]
 MODE_LABELS = {
     "b0": "B0 Brute Force",
-    "a0": "A0 Official ANN",
-    "b2": "B2 Fallback",
     "acorn": "ACORN-1",
     "grid": "Grid-HNSW",
 }

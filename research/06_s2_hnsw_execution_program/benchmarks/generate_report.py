@@ -34,16 +34,14 @@ except ImportError:
     print("  pip3 install matplotlib numpy")
     sys.exit(1)
 
-MODE_ORDER = ["b0", "b2", "acorn", "grid"]
+MODE_ORDER = ["b0", "acorn", "grid"]
 MODE_LABELS = {
     "b0": "B0: Brute Force",
-    "b2": "B2: HNSW Fallback",
     "acorn": "ACORN-1",
     "grid": "Grid-HNSW",
 }
 MODE_COLORS = {
     "b0": "#6c757d",
-    "b2": "#0d6efd",
     "acorn": "#198754",
     "grid": "#dc3545",
 }
@@ -304,22 +302,22 @@ def generate_analysis(data_table, available_modes):
 
     sections.append(
         "<h2>Why These Results?</h2>"
-        "<p>The three methods represent fundamentally different strategies for "
+        "<p>The methods represent fundamentally different strategies for "
         "answering <em>spatial + vector</em> queries (\"find the K nearest embeddings "
         "within a geographic region\"):</p>"
         "<ul>"
         "<li><strong>B0 (Brute Force)</strong> scans every row, computes distances, "
         "applies the spatial filter, and sorts. It is 100% accurate (recall = 1.0) but "
         "O(N) in both vector distance and spatial predicate evaluation.</li>"
-        "<li><strong>B2 (HNSW Fallback)</strong> detects the spatial predicate in the "
-        "query planner and falls back to brute-force scan with exact distance computation. "
-        "It preserves full recall but gains no speedup from the HNSW index because the "
-        "spatial predicate forces the planner off the ANN path.</li>"
         "<li><strong>ACORN-1</strong> is a predicate-aware HNSW variant. During graph "
         "traversal it expands 2-hop neighbors and evaluates the spatial predicate inline, "
-        "allowing it to leverage the HNSW graph structure while filtering. This should "
-        "produce sub-linear search time with high recall, though recall may drop below 1.0 "
+        "allowing it to leverage the HNSW graph structure while filtering. This produces "
+        "sub-linear search time with high recall, though recall may drop below 1.0 "
         "for very selective predicates where the graph neighbourhood is sparse.</li>"
+        "<li><strong>Grid-HNSW</strong> partitions vectors by S2 cell at write time and "
+        "builds a per-cell HNSW index. At query time, only cells overlapping the spatial "
+        "predicate are searched, reducing the search space proportionally to the "
+        "geographic selectivity of the query.</li>"
         "</ul>"
     )
 
@@ -486,7 +484,7 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
 <body>
 <div class="container">
   <h1>Spatial-Vector Benchmark Report</h1>
-  <p class="subtitle">B0 (Brute Force) vs B2 (HNSW Fallback) vs ACORN-1 vs Grid-HNSW &mdash; Generated {timestamp}</p>
+  <p class="subtitle">B0 (Brute Force) vs ACORN-1 vs Grid-HNSW &mdash; Generated {timestamp}</p>
 
   <div class="meta">
     <div class="meta-item"><strong>Rows:</strong> {rows:,}</div>
