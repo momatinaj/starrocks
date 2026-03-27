@@ -475,6 +475,11 @@ def main():
         action="store_true",
         help="Skip data generation and loading (reuse existing table)",
     )
+    parser.add_argument(
+        "--clone-from",
+        default=None,
+        help="Clone data from an existing mode's table (e.g. --clone-from b0) instead of row-by-row INSERT",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -509,7 +514,19 @@ def main():
             print(f"  Table {tbl} does not exist. Loading data despite --skip-load.")
             need_load = True
 
-    if need_load:
+    if need_load and args.clone_from:
+        src = table_name(args.clone_from)
+        tbl = table_name(args.mode)
+        print(f"[2/4] Creating table {tbl} ...")
+        create_table(conn, args.mode, args.dim)
+        print(f"[3/4] Cloning data: INSERT INTO {tbl} SELECT * FROM {src} ...")
+        t0 = time.time()
+        execute(conn, f"INSERT INTO {tbl} SELECT * FROM {src}")
+        elapsed = time.time() - t0
+        print(f"  Clone complete in {elapsed:.1f}s")
+        print("  Waiting for data to settle...")
+        time.sleep(5)
+    elif need_load:
         print("[1/4] Generating synthetic data...")
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
@@ -521,8 +538,6 @@ def main():
 
         print("  Waiting for data to settle...")
         time.sleep(5)
-    else:
-        lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
     # Generate query vectors (use a different seed so queries differ from data)
     query_rng = np.random.default_rng(args.seed + 1000)

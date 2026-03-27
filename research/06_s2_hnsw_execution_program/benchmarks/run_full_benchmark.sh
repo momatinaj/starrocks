@@ -123,16 +123,24 @@ echo "============================================================"
 python3 "$BENCH" --mode b0 $COMMON_ARGS
 echo ""
 
+# ACORN and Grid-HNSW clone data from B0 table (fast bulk copy) instead of
+# row-by-row INSERT. --clone-from is ignored when --skip-load is active and
+# the table already exists.
+CLONE_ARG=""
+if [ -z "$SKIP_LOAD" ]; then
+    CLONE_ARG="--clone-from b0"
+fi
+
 echo "============================================================"
 echo " [2/3] ACORN -- ACORN-1 Predicate-Aware Search"
 echo "============================================================"
-python3 "$BENCH" --mode acorn $COMMON_ARGS
+python3 "$BENCH" --mode acorn $COMMON_ARGS $CLONE_ARG
 echo ""
 
 echo "============================================================"
 echo " [3/3] GRID -- Grid-HNSW Spatially Partitioned Search"
 echo "============================================================"
-python3 "$BENCH" --mode grid $COMMON_ARGS
+python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
 echo ""
 
 echo "============================================================"
