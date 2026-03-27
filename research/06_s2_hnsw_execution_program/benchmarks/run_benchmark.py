@@ -483,24 +483,29 @@ def main():
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'
         )
 
-    if not args.skip_load:
-        # Generate data
+    need_load = not args.skip_load
+    if args.skip_load:
+        tbl = table_name(args.mode)
+        try:
+            execute(conn, f"SELECT 1 FROM {tbl} LIMIT 1", fetch=True)
+            print("[1-3/4] Skipped (--skip-load). Reusing existing table.")
+        except Exception:
+            print(f"  Table {tbl} does not exist. Loading data despite --skip-load.")
+            need_load = True
+
+    if need_load:
         print("[1/4] Generating synthetic data...")
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
-        # Create table
         print("[2/4] Creating table...")
         create_table(conn, args.mode, args.dim)
 
-        # Load data
         print("[3/4] Loading data...")
         load_data(conn, args.mode, lats, lngs, vecs)
 
-        # Wait for data to be visible
         print("  Waiting for data to settle...")
         time.sleep(5)
     else:
-        print("[1-3/4] Skipped (--skip-load). Reusing existing table.")
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
     # Generate query vectors (use a different seed so queries differ from data)

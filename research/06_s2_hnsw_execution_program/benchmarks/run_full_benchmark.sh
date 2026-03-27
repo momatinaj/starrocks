@@ -10,7 +10,7 @@
 #   ./run_full_benchmark.sh --skip-load        # reuse existing tables
 #
 
-set -euo pipefail
+set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH="$SCRIPT_DIR/run_benchmark.py"
@@ -59,7 +59,7 @@ echo ">> Verifying StarRocks is reachable on port $PORT ..."
 if ! mysql -h "$HOST" -P "$PORT" -u root -e "SELECT 1" >/dev/null 2>&1; then
     echo "ERROR: Cannot connect to StarRocks at $HOST:$PORT"
     echo "Start the cluster first:"
-    echo "  docker compose -f docker-compose.dev.yml up -d starrocks-custom-fe starrocks-custom-be"
+    echo "  docker-compose -f docker-compose.dev.yml up -d starrocks-custom-fe starrocks-custom-be"
     exit 1
 fi
 echo "   OK"
