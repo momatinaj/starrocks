@@ -25,17 +25,19 @@
 
 namespace starrocks {
 
-// Implements ACORN-1 search (Algorithm 2 from the ACORN paper).
+// Implements ACORN-1 search (Algorithm 2 from the ACORN paper,
+// https://arxiv.org/abs/2403.04871).
 //
-// ACORN-1 modifies standard HNSW search by expanding neighbor lists to include
-// 2-hop neighbors, filtering by an arbitrary predicate, and traversing the
-// resulting predicate-satisfying subgraph. Construction is identical to HNSW.
+// Key points of the algorithm:
+//   - Upper levels (>= 1): standard HNSW greedy search (NO predicate).
+//     This finds the best entry point near the query vector.
+//   - Level 0: ACORN search with 2-hop neighbor expansion + predicate filter.
+//     Non-qualifying nodes are still explored as navigation stepping stones,
+//     but only qualifying nodes are kept in the result set.
+//   - ef_search is boosted when a predicate is active, to compensate for
+//     reduced effective graph connectivity under selective predicates.
 //
-// This reader:
-// 1. Loads the HNSW graph from the .vi file via HNSWGraphAccessor
-// 2. Accepts pre-loaded vector data for distance computation
-// 3. Accepts an optional SearchPredicateEvaluator for predicate filtering
-// 4. Implements the ACORN-1 multi-level greedy search with 2-hop expansion
+// Construction is identical to standard HNSW — the graph is not modified.
 class AcornIndexReader {
 public:
     using node_id_t = HNSWGraphAccessor::node_id_t;
@@ -53,17 +55,11 @@ public:
     AcornIndexReader() = default;
     ~AcornIndexReader() = default;
 
-    // Initialize from a .vi file path.
     Status init(const std::string& index_path);
 
-    // Set pre-loaded vector data from segment columns (row_id -> float vector).
-    // vectors: flat array of [num_rows * dim] floats.
     void set_vector_data(const float* vectors, int num_rows, int dim);
-
-    // Set the predicate evaluator (optional; nullptr = no predicate filtering).
     void set_predicate_evaluator(std::unique_ptr<SearchPredicateEvaluator> evaluator);
 
-    // Run ACORN-1 search.
     Status search(const float* query_vector, const SearchParams& params, SearchResult& result);
 
     bool is_valid() const { return _graph.is_valid(); }
@@ -72,11 +68,8 @@ public:
     int dimension() const { return _dim; }
 
 private:
-    // ACORN-1 Algorithm 2: multi-level search
     void _search_multi_level(const float* query, int k, int ef_search, SearchResult& result);
 
-    // Search at a single level with ef candidates.
-    // Returns: candidate set sorted by distance.
     struct NodeDist {
         node_id_t id;
         float distance;
@@ -84,12 +77,16 @@ private:
         bool operator>(const NodeDist& other) const { return distance > other.distance; }
     };
 
-    std::vector<NodeDist> _search_layer(const float* query, node_id_t entry, int ef, int level);
+    // Standard HNSW layer search (no predicate filtering). Used for upper levels.
+    std::vector<NodeDist> _search_layer_standard(const float* query, node_id_t entry, int ef, int level);
 
-    // ACORN-1's modified GET-NEIGHBORS: 2-hop expansion + predicate filter.
-    std::vector<node_id_t> _get_neighbors_acorn(node_id_t node_id, int level);
+    // ACORN-1 layer search with hybrid exploration. Used for level 0.
+    // Explores through ALL 2-hop neighbors (for navigation), but only keeps
+    // predicate-satisfying nodes in the result set.
+    std::vector<NodeDist> _search_layer_acorn(const float* query, node_id_t entry, int ef, int level);
 
-    // Compute L2 distance between query and stored vector at node_id.
+    bool _satisfies_predicate(node_id_t node_id) const;
+
     float _compute_distance(const float* query, node_id_t node_id) const;
 
     HNSWGraphAccessor _graph;
