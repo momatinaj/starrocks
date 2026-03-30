@@ -893,7 +893,7 @@ Status SegmentIterator::_load_double_column(const std::string& col_name, std::ve
     uint32_t total_rows = _segment->num_rows();
     out->resize(total_rows);
 
-    auto data_col = ChunkHelper::column_from_field(*schema.field(col_idx));
+    auto data_col = ChunkHelper::column_from_field_type(col.type(), col.is_nullable());
     constexpr size_t kBatch = 4096;
     uint32_t read_so_far = 0;
     while (read_so_far < total_rows) {
