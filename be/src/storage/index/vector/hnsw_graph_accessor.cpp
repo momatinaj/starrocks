@@ -232,12 +232,15 @@ Status HNSWGraphAccessor::init(const std::string& index_path, bool load_vectors)
             return Status::Corruption("Cannot read IndexFlat header from: " + index_path);
         }
 
-        // WRITEXBVECTOR(codes): size_t nbytes + uint8_t[nbytes]
-        // The codes are raw float vectors stored as bytes: nbytes = ntotal * d * sizeof(float)
-        size_t nbytes;
-        if (!read_val(file, nbytes)) {
+        // WRITEXBVECTOR(codes): writes size_t (count/4) then count bytes.
+        // For IndexFlat, codes = uint8_t[ntotal * d * sizeof(float)].
+        // WRITEXBVECTOR divides codes.size() by 4 before writing the count,
+        // so the stored value = ntotal * d. Actual bytes = stored_value * 4.
+        size_t xb_size;
+        if (!read_val(file, xb_size)) {
             return Status::Corruption("Cannot read codes size from: " + index_path);
         }
+        size_t nbytes = xb_size * 4; // WRITEXBVECTOR stores size/4
 
         if (load_vectors && nbytes > 0) {
             size_t num_floats = nbytes / sizeof(float);
