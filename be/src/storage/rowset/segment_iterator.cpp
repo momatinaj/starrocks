@@ -218,11 +218,6 @@ private:
         // ACORN-1 reader (mutually exclusive with ann_reader and spatial_reader)
         std::unique_ptr<AcornIndexReader> acorn_reader;
 
-        // When AcornIndexReader::init fails (custom Faiss parser can't read the
-        // TenANN-produced .vi file), we fall back to TenANN's standard reader
-        // but still apply spatial-predicate-aware oversampling.
-        bool acorn_oversample_fallback = false;
-
         // Helper method to check if rowid should always be built
         bool always_build_rowid() const { return use_vector_index && !use_ivfpq; }
         bool use_vector_fallback() const { return !fallback_mode.empty(); }
@@ -797,14 +792,10 @@ Status SegmentIterator::_init_ann_reader() {
                           << " num_nodes=" << _vector_index_ctx->acorn_reader->num_nodes();
                 return Status::OK();
             }
-            LOG(WARNING) << "ACORN reader init failed or invalid: " << st.to_string()
-                         << " — will fall back to TenANN reader with oversampling";
+            LOG(WARNING) << "ACORN reader init failed or invalid: " << st.to_string();
             _vector_index_ctx->acorn_reader.reset();
-            _vector_index_ctx->acorn_oversample_fallback = true;
         } else {
-            LOG(WARNING) << "ACORN .vi file not found: " << index_path
-                         << " — will fall back to TenANN reader with oversampling";
-            _vector_index_ctx->acorn_oversample_fallback = true;
+            LOG(WARNING) << "ACORN .vi file not found: " << index_path;
         }
     }
 
@@ -954,51 +945,6 @@ Status SegmentIterator::_get_row_ranges_by_vector_index() {
             st = _vector_index_ctx->spatial_reader->search(
                     _vector_index_ctx->query_cell_ids, _vector_index_ctx->query_view, _vector_index_ctx->k,
                     &result_ids, &result_distances);
-        } else if (_vector_index_ctx->acorn_oversample_fallback &&
-                   _vector_index_ctx->ann_reader != nullptr) {
-            // ACORN fallback: custom Faiss parser failed, so we use TenANN's
-            // standard reader with oversampling + in-memory predicate filtering.
-            auto pred_spec = AcornPredicateSpec::from_query_params(_vector_index_ctx->query_params);
-            constexpr int kOversampleFactor = 20;
-            int64_t oversample_k = (pred_spec.type != AcornPredicateSpec::NONE)
-                    ? _vector_index_ctx->k * kOversampleFactor
-                    : _vector_index_ctx->k;
-            LOG(INFO) << "ACORN oversample fallback: k=" << _vector_index_ctx->k
-                      << " oversample_k=" << oversample_k
-                      << " pred_type=" << static_cast<int>(pred_spec.type);
-
-            result_ids.resize(oversample_k);
-            result_distances.resize(oversample_k);
-            st = _vector_index_ctx->ann_reader->search(
-                    _vector_index_ctx->query_view, oversample_k, result_ids.data(),
-                    reinterpret_cast<uint8_t*>(result_distances.data()), &del_id_filter);
-
-            if (st.ok() && pred_spec.type != AcornPredicateSpec::NONE) {
-                auto evaluator = create_predicate_evaluator(pred_spec);
-                if (evaluator) {
-                    std::vector<double> lat_data, lng_data;
-                    auto load_st = _load_double_column(pred_spec.lat_column_name, &lat_data);
-                    if (load_st.ok()) load_st = _load_double_column(pred_spec.lng_column_name, &lng_data);
-                    if (load_st.ok()) load_st = evaluator->init(pred_spec, lat_data, lng_data);
-                    if (load_st.ok()) {
-                        std::vector<int64_t> qualified_ids;
-                        std::vector<float> qualified_dists;
-                        for (size_t i = 0; i < result_ids.size() && result_ids[i] != -1; i++) {
-                            if (evaluator->evaluate(result_ids[i])) {
-                                qualified_ids.push_back(result_ids[i]);
-                                qualified_dists.push_back(result_distances[i]);
-                                if (static_cast<int64_t>(qualified_ids.size()) >= _vector_index_ctx->k) break;
-                            }
-                        }
-                        LOG(INFO) << "ACORN oversample filter: " << result_ids.size()
-                                  << " candidates -> " << qualified_ids.size() << " qualified";
-                        result_ids = std::move(qualified_ids);
-                        result_distances = std::move(qualified_dists);
-                    } else {
-                        LOG(WARNING) << "ACORN oversample predicate init failed: " << load_st.to_string();
-                    }
-                }
-            }
         } else if (_vector_index_ctx->vector_range >= 0) {
             st = _vector_index_ctx->ann_reader->range_search(
                     _vector_index_ctx->query_view, _vector_index_ctx->k, &result_ids, &result_distances, &del_id_filter,
