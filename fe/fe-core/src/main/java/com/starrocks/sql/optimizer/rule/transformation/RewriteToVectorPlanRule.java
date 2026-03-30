@@ -339,15 +339,22 @@ public class RewriteToVectorPlanRule extends TransformationRule {
     private void extractAcornSpatialParams(ScalarOperator predicate, LogicalOlapScanOperator scanOp,
                                            VectorSearchOptions opts) {
         if (predicate instanceof BinaryPredicateOperator) {
+            BinaryPredicateOperator binOp = (BinaryPredicateOperator) predicate;
+            BinaryType type = binOp.getBinaryType();
             ScalarOperator lhs = predicate.getChild(0);
             ScalarOperator rhs = predicate.getChild(1);
+            
             if (lhs instanceof CallOperator && ((CallOperator) lhs).getFnName().equalsIgnoreCase(ST_DISTANCE_SPHERE)) {
-                extractRadiusPredicate((CallOperator) lhs, rhs, scanOp, opts);
-                return;
+                if (type == BinaryType.LT || type == BinaryType.LE) {
+                    extractRadiusPredicate((CallOperator) lhs, rhs, scanOp, opts);
+                    return;
+                }
             }
             if (rhs instanceof CallOperator && ((CallOperator) rhs).getFnName().equalsIgnoreCase(ST_DISTANCE_SPHERE)) {
-                extractRadiusPredicate((CallOperator) rhs, lhs, scanOp, opts);
-                return;
+                if (type == BinaryType.GT || type == BinaryType.GE) {
+                    extractRadiusPredicate((CallOperator) rhs, lhs, scanOp, opts);
+                    return;
+                }
             }
         }
 

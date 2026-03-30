@@ -116,13 +116,15 @@ Status SpatialVectorIndexReader::search(const std::vector<uint64_t>& query_cell_
     partition_results.reserve(matching.size());
 
     for (const auto* part_info : matching) {
-        size_t idx = 0;
+        size_t idx = std::string::npos;
         for (size_t i = 0; i < _partitions.size(); i++) {
             if (_partitions[i].info.cell_id == part_info->cell_id) {
                 idx = i;
                 break;
             }
         }
+        
+        if (idx == std::string::npos) continue;
 
         auto& state = _partitions[idx];
         if (!state.reader) continue;

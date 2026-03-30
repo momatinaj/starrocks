@@ -37,21 +37,25 @@ Status SpatialPartitionManifest::init_from_properties(const std::map<std::string
         return Status::InvalidArgument("index is not spatial-partitioned");
     }
 
-    ASSIGN_OR_RETURN(auto s2_level_str, find_required(SpatialIndexPropertyKeys::kS2Level));
-    _s2_level = std::stoi(s2_level_str);
-    if (!s2_is_valid_level(_s2_level)) {
-        return Status::InvalidArgument(fmt::format("invalid s2_level: {}", _s2_level));
-    }
+    try {
+        ASSIGN_OR_RETURN(auto s2_level_str, find_required(SpatialIndexPropertyKeys::kS2Level));
+        _s2_level = std::stoi(s2_level_str);
+        if (!s2_is_valid_level(_s2_level)) {
+            return Status::InvalidArgument(fmt::format("invalid s2_level: {}", _s2_level));
+        }
 
-    ASSIGN_OR_RETURN(auto lat_str, find_required(SpatialIndexPropertyKeys::kSpatialLatColumnUid));
-    _spatial_lat_column_uid = std::stoi(lat_str);
+        ASSIGN_OR_RETURN(auto lat_str, find_required(SpatialIndexPropertyKeys::kSpatialLatColumnUid));
+        _spatial_lat_column_uid = std::stoi(lat_str);
 
-    ASSIGN_OR_RETURN(auto lng_str, find_required(SpatialIndexPropertyKeys::kSpatialLngColumnUid));
-    _spatial_lng_column_uid = std::stoi(lng_str);
+        ASSIGN_OR_RETURN(auto lng_str, find_required(SpatialIndexPropertyKeys::kSpatialLngColumnUid));
+        _spatial_lng_column_uid = std::stoi(lng_str);
 
-    auto min_rows_it = index_props.find(SpatialIndexPropertyKeys::kMinPartitionRows);
-    if (min_rows_it != index_props.end()) {
-        _min_partition_rows = static_cast<uint32_t>(std::stoul(min_rows_it->second));
+        auto min_rows_it = index_props.find(SpatialIndexPropertyKeys::kMinPartitionRows);
+        if (min_rows_it != index_props.end()) {
+            _min_partition_rows = static_cast<uint32_t>(std::stoul(min_rows_it->second));
+        }
+    } catch (const std::exception& e) {
+        return Status::InvalidArgument(fmt::format("failed to parse numeric property: {}", e.what()));
     }
 
     return Status::OK();

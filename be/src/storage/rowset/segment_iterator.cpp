@@ -828,11 +828,15 @@ Status SegmentIterator::_init_ann_reader() {
                     std::string pred_type = pt_it->second;
                     for (auto& c : pred_type) c = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
                     if (pred_type == "radius") {
-                        double lat = std::stod(qp.at("grid_predicate_center_lat"));
-                        double lng = std::stod(qp.at("grid_predicate_center_lng"));
-                        double radius_m = std::stod(qp.at("grid_predicate_radius_m"));
-                        _vector_index_ctx->query_cell_ids =
-                                s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level);
+                        try {
+                            double lat = std::stod(qp.at("grid_predicate_center_lat"));
+                            double lng = std::stod(qp.at("grid_predicate_center_lng"));
+                            double radius_m = std::stod(qp.at("grid_predicate_radius_m"));
+                            _vector_index_ctx->query_cell_ids =
+                                    s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level);
+                        } catch (const std::exception& e) {
+                            LOG(WARNING) << "Grid-HNSW failed to parse radius predicate: " << e.what();
+                        }
                     } else if (pred_type == "polygon") {
                         _vector_index_ctx->query_cell_ids =
                                 s2_covering_cell_ids_for_polygon_wkt(qp.at("grid_predicate_wkt"), s2_level);
@@ -889,15 +893,33 @@ Status SegmentIterator::_load_double_column(const std::string& col_name, std::ve
     uint32_t total_rows = _segment->num_rows();
     out->resize(total_rows);
 
-    auto double_col = DoubleColumn::create();
+    auto data_col = ChunkHelper::column_from_field(*_schema.field(cid));
     constexpr size_t kBatch = 4096;
     uint32_t read_so_far = 0;
     while (read_so_far < total_rows) {
-        double_col->reset_column();
+        data_col->reset_column();
         size_t to_read = std::min(static_cast<size_t>(total_rows - read_so_far), kBatch);
-        RETURN_IF_ERROR(col_iter->next_batch(&to_read, double_col.get()));
-        const auto* raw = double_col->get_data().data();
-        std::copy(raw, raw + to_read, out->data() + read_so_far);
+        RETURN_IF_ERROR(col_iter->next_batch(&to_read, data_col.get()));
+        
+        const double* raw = nullptr;
+        const uint8_t* null_data = nullptr;
+        
+        if (data_col->is_nullable()) {
+            const auto* nullable_col = down_cast<const NullableColumn*>(data_col.get());
+            raw = down_cast<const DoubleColumn*>(nullable_col->data_column().get())->get_data().data();
+            null_data = nullable_col->null_column_data().data();
+        } else {
+            raw = down_cast<const DoubleColumn*>(data_col.get())->get_data().data();
+        }
+        
+        for (size_t i = 0; i < to_read; i++) {
+            if (null_data && null_data[i]) {
+                (*out)[read_so_far + i] = 999.0; // Invalid coordinate, will fail spatial predicates
+            } else {
+                (*out)[read_so_far + i] = raw[i];
+            }
+        }
+        
         read_so_far += to_read;
     }
 

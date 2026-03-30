@@ -506,27 +506,32 @@ Status SegmentWriter::append_chunk(const Chunk& chunk) {
         const Column* lng_col_raw = chunk.get_column_by_index(_spatial_lng_col_writer_idx).get();
 
         const double* lat_data = nullptr;
-        const double* lng_data = nullptr;
+        const uint8_t* lat_nulls = nullptr;
         if (lat_col_raw->is_nullable()) {
-            lat_data = down_cast<const FixedLengthColumn<double>*>(
-                               down_cast<const NullableColumn*>(lat_col_raw)->data_column().get())
-                               ->get_data()
-                               .data();
+            const auto* nullable_lat = down_cast<const NullableColumn*>(lat_col_raw);
+            lat_data = down_cast<const FixedLengthColumn<double>*>(nullable_lat->data_column().get())->get_data().data();
+            lat_nulls = nullable_lat->null_column_data().data();
         } else {
             lat_data = down_cast<const FixedLengthColumn<double>*>(lat_col_raw)->get_data().data();
         }
+
+        const double* lng_data = nullptr;
+        const uint8_t* lng_nulls = nullptr;
         if (lng_col_raw->is_nullable()) {
-            lng_data = down_cast<const FixedLengthColumn<double>*>(
-                               down_cast<const NullableColumn*>(lng_col_raw)->data_column().get())
-                               ->get_data()
-                               .data();
+            const auto* nullable_lng = down_cast<const NullableColumn*>(lng_col_raw);
+            lng_data = down_cast<const FixedLengthColumn<double>*>(nullable_lng->data_column().get())->get_data().data();
+            lng_nulls = nullable_lng->null_column_data().data();
         } else {
             lng_data = down_cast<const FixedLengthColumn<double>*>(lng_col_raw)->get_data().data();
         }
 
         std::vector<uint64_t> cell_ids(chunk_num_rows);
         for (size_t j = 0; j < chunk_num_rows; j++) {
-            cell_ids[j] = s2_cell_id_from_latlng(lat_data[j], lng_data[j], _spatial_s2_level);
+            if ((lat_nulls && lat_nulls[j]) || (lng_nulls && lng_nulls[j])) {
+                cell_ids[j] = 0; // Invalid/Null spatial location
+            } else {
+                cell_ids[j] = s2_cell_id_from_latlng(lat_data[j], lng_data[j], _spatial_s2_level);
+            }
         }
         RETURN_IF_ERROR(_spatial_vector_writer->append(*vec_col, cell_ids));
     }
