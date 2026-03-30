@@ -124,97 +124,149 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_standard
     return sorted;
 }
 
-// ACORN-1 search with strict predicate-aware traversal — used for level 0.
-//
-// Key design (exactly matching ACORN paper Algorithm 2/3 for gamma=1):
-//   - Uses 2-hop expanded neighbor lists to look across the graph.
-//   - ONLY predicate-satisfying nodes are added to the candidate queue (C).
-//   - This prevents the search from wasting steps on non-qualifying nodes.
-//   - Non-qualifying nodes are implicitly used as "stepping stones" because
-//     they are traversed to find the 2-hop neighbors, but they NEVER enter
-//     the candidate queue themselves.
+void AcornIndexReader::_heap_push(std::vector<int64_t>& ids, std::vector<float>& dists, int& nres, int max_size,
+                                  int64_t id, float dist) {
+    if (nres < max_size) {
+        ids.push_back(id);
+        dists.push_back(dist);
+        nres++;
+        // sift up to maintain max-heap (worst distance at [0])
+        int i = nres - 1;
+        while (i > 0) {
+            int parent = (i - 1) / 2;
+            if (dists[parent] < dists[i]) {
+                std::swap(dists[parent], dists[i]);
+                std::swap(ids[parent], ids[i]);
+                i = parent;
+            } else {
+                break;
+            }
+        }
+    } else if (dist < dists[0]) {
+        // Replace the worst (root of max-heap) and sift down
+        dists[0] = dist;
+        ids[0] = id;
+        int i = 0;
+        while (true) {
+            int l = 2 * i + 1, r = 2 * i + 2;
+            int largest = i;
+            if (l < nres && dists[l] > dists[largest]) largest = l;
+            if (r < nres && dists[r] > dists[largest]) largest = r;
+            if (largest == i) break;
+            std::swap(dists[i], dists[largest]);
+            std::swap(ids[i], ids[largest]);
+            i = largest;
+        }
+    }
+}
+
+// Faithful reimplementation of hybrid_search_from_candidates from the
+// reference ACORN code (acorn_hnsw.cpp).  Key properties preserved:
+//   1. Only predicate-satisfying nodes are marked visited.
+//   2. Per-neighbor 1-hop + 2-hop expansion (not pre-computed flat set).
+//   3. num_found >= 2*M cap per expansion step.
+//   4. nstep-based termination (nstep > efSearch).
 std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(const float* query, node_id_t entry,
                                                                               int ef, int level) {
     auto cmp_min = [](const NodeDist& a, const NodeDist& b) { return a.distance > b.distance; };
     std::priority_queue<NodeDist, std::vector<NodeDist>, decltype(cmp_min)> candidates(cmp_min);
 
-    // Result set: only predicate-satisfying nodes
-    auto cmp_max = [](const NodeDist& a, const NodeDist& b) { return a.distance < b.distance; };
-    std::priority_queue<NodeDist, std::vector<NodeDist>, decltype(cmp_max)> results(cmp_max);
-
     std::unordered_set<node_id_t> visited;
 
-    float d = _compute_distance(query, entry);
-    // The entry point might not satisfy the predicate, but we must push it to
-    // candidates to start the search. It acts as the initial stepping stone.
-    candidates.push({entry, d});
-    if (_satisfies_predicate(entry)) {
-        results.push({entry, d});
-    }
+    // Result heap: top-k by distance (max-heap, worst at top)
+    std::vector<int64_t> res_ids;
+    std::vector<float> res_dists;
+    int nres = 0;
+
+    int M = _graph.M();
+    int ndis = 0;
+
+    // Seed candidates with the entry point (matching reference lines 1424-1436)
+    float d_entry = _compute_distance(query, entry);
+    candidates.push({entry, d_entry});
     visited.insert(entry);
+    if (_satisfies_predicate(entry)) {
+        res_ids.push_back(entry);
+        res_dists.push_back(d_entry);
+        nres = 1;
+    }
 
-    // Limit total visited nodes to prevent runaway search with very selective predicates.
-    // With ef=400, this caps at 4000 nodes.
-    const int max_visits = std::max(2000, ef * 10);
-    int visit_count = 1;
+    int nstep = 0;
 
-    while (!candidates.empty() && visit_count < max_visits) {
+    while (!candidates.empty()) {
         auto current = candidates.top();
         candidates.pop();
 
-        // Termination: stop when the best remaining candidate is worse than the
-        // worst result AND we have enough qualifying results
-        if (!results.empty() && static_cast<int>(results.size()) >= ef &&
-            current.distance > results.top().distance) {
-            break;
-        }
+        // Reference lines 1456-1535: expand v0's 1-hop neighbors
+        auto one_hop = _graph.neighbors(current.id, level);
 
-        // ACORN-1 logic: Look at all nodes within 2 hops (gamma=1).
-        auto expanded = _graph.expanded_neighbors(current.id, level);
-
-        if (visit_count <= 2) {
+        if (nstep == 0) {
             LOG(INFO) << "ACORN expand: current=" << current.id
-                      << " expanded_size=" << expanded.size()
-                      << " 1hop_size=" << _graph.neighbors(current.id, level).size();
+                      << " 1hop_size=" << one_hop.size()
+                      << " node_level=" << _graph.node_level(current.id);
         }
 
-        for (auto n : expanded) {
-            if (visited.count(n) > 0) continue;
-            visited.insert(n);
-            visit_count++;
+        int num_found = 0;
+        for (auto v1 : one_hop) {
+            if (v1 < 0) break;
 
-            // CRITICAL: We ONLY process nodes that satisfy the predicate.
-            // Non-qualifying nodes are completely ignored here (they were
-            // already used implicitly as bridges to find the 2-hop neighbors).
-            if (_satisfies_predicate(n)) {
-                float dist = _compute_distance(query, n);
-                
-                float worst = results.empty() ? std::numeric_limits<float>::max() : results.top().distance;
-                if (static_cast<int>(results.size()) < ef || dist < worst) {
-                    // Valid node: add to BOTH candidates (to continue search) and results
-                    candidates.push({n, dist});
-                    results.push({n, dist});
-                    if (static_cast<int>(results.size()) > ef) {
-                        results.pop();
-                    }
+            bool v1_qualifies = _satisfies_predicate(v1);
+            if (v1_qualifies) num_found++;
+
+            // Reference: only skip if v1 is already visited (and only qualifying
+            // nodes get marked visited, so non-qualifying are never in this set).
+            if (visited.count(v1) > 0) {
+                // Still do 2-hop expansion below even if v1 was visited
+            } else if (v1_qualifies) {
+                // Reference lines 1480-1496: qualifying + not visited
+                visited.insert(v1);
+                ndis++;
+                float d = _compute_distance(query, v1);
+                // Add to result heap (max-heap of size k)
+                _heap_push(res_ids, res_dists, nres, ef, v1, d);
+                candidates.push({v1, d});
+                if (num_found >= 2 * M) break;
+            }
+
+            // Reference lines 1499-1533: 2-hop expansion for EVERY v1
+            // (regardless of whether v1 satisfies the predicate)
+            auto two_hop = _graph.neighbors(v1, level);
+            for (auto v2 : two_hop) {
+                if (v2 < 0) break;
+
+                bool v2_qualifies = _satisfies_predicate(v2);
+                if (v2_qualifies) {
+                    num_found++;
+                } else {
+                    continue;  // reference line 1512
                 }
+
+                if (visited.count(v2) > 0) continue;
+                visited.insert(v2);
+                ndis++;
+                float d2 = _compute_distance(query, v2);
+                _heap_push(res_ids, res_dists, nres, ef, v2, d2);
+                candidates.push({v2, d2});
+                if (num_found >= 2 * M) break;
             }
         }
+
+        nstep++;
+        if (nstep > ef) break;  // reference line 1539
     }
 
-    int total_qualifying = 0;
+    // Convert result heap to sorted output
     std::vector<NodeDist> sorted;
-    sorted.reserve(results.size());
-    while (!results.empty()) {
-        sorted.push_back(results.top());
-        results.pop();
-        total_qualifying++;
+    sorted.reserve(nres);
+    for (int i = 0; i < nres; i++) {
+        sorted.push_back({static_cast<node_id_t>(res_ids[i]), res_dists[i]});
     }
     std::sort(sorted.begin(), sorted.end());
-    LOG(INFO) << "ACORN _search_layer_acorn stats: visited=" << visit_count
-              << "/" << max_visits
-              << " qualifying_found=" << total_qualifying
-              << " candidates_remaining=" << candidates.size()
+
+    LOG(INFO) << "ACORN _search_layer_acorn stats: nstep=" << nstep
+              << " ndis=" << ndis
+              << " qualifying_found=" << nres
+              << " visited_size=" << visited.size()
               << " ef=" << ef;
     return sorted;
 }

@@ -89,6 +89,11 @@ private:
 
     float _compute_distance(const float* query, node_id_t node_id) const;
 
+    // Bounded max-heap push matching Faiss heap_addn_with_ids semantics.
+    // Keeps the closest `max_size` nodes; rejects if full and dist >= worst.
+    static void _heap_push(std::vector<int64_t>& ids, std::vector<float>& dists, int& nres, int max_size,
+                           int64_t id, float dist);
+
     HNSWGraphAccessor _graph;
     std::unique_ptr<SearchPredicateEvaluator> _predicate;
 
