@@ -27,9 +27,9 @@ namespace starrocks {
 // Provides adjacency list access, 2-hop expansion, and basic graph queries
 // for use by the ACORN-1 search algorithm.
 //
-// Uses Faiss's own read_index() API to correctly parse all index variants
-// (IndexHNSWFlat, IndexIDMap+IndexHNSW, IndexPreTransform+IndexHNSW, etc.)
-// produced by TenANN.
+// Parses the Faiss binary serialization format directly (no Faiss headers
+// required at compile time). Handles IndexIDMap wrapping (produced by TenANN
+// when nullable vector columns are used) and plain IndexHNSWFlat.
 //
 // When load_vectors=true is passed to init(), also extracts the stored
 // flat vector data from the IndexFlat storage inside IndexHNSWFlat.

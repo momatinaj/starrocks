@@ -25,12 +25,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "faiss/IndexFlat.h"
-#include "faiss/IndexHNSW.h"
-#include "faiss/IndexIDMap.h"
-#include "faiss/index_io.h"
 #include "fs/fs.h"
 #include "fs/fs_util.h"
+#include "hnsw_test_helper.h"
 #include "testutil/assert.h"
 
 namespace starrocks {
@@ -49,38 +46,18 @@ protected:
 
     const std::string test_dir = "hnsw_graph_accessor_test";
 
-    // Build an IndexHNSWFlat with random data and write it using Faiss's API.
     std::string write_hnsw_flat(int num_nodes, int M, int dim, bool wrap_idmap = false) {
         std::string path = test_dir + "/test_graph.vi";
-
-        auto* hnsw_index = new faiss::IndexHNSWFlat(dim, M);
-        hnsw_index->hnsw.efConstruction = 40;
-        hnsw_index->hnsw.efSearch = 16;
-
-        std::mt19937 rng(42);
-        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-        std::vector<float> vectors(num_nodes * dim);
-        for (auto& v : vectors) v = dist(rng);
-
-        if (wrap_idmap) {
-            faiss::IndexIDMap id_map_index(hnsw_index);
-            std::vector<int64_t> ids(num_nodes);
-            for (int i = 0; i < num_nodes; i++) ids[i] = i * 2; // external IDs: 0, 2, 4, 6, ...
-            id_map_index.add_with_ids(num_nodes, vectors.data(), ids.data());
-            faiss::write_index(&id_map_index, path.c_str());
-            // IndexIDMap does NOT own the sub-index when constructed this way,
-            // so we must delete hnsw_index manually after write.
-            delete hnsw_index;
-        } else {
-            hnsw_index->add(num_nodes, vectors.data());
-            faiss::write_index(hnsw_index, path.c_str());
-            delete hnsw_index;
-        }
-
-        return path;
+        auto vectors = generate_random_vectors(num_nodes, dim);
+        return test::build_hnsw_index_file(path, dim, M, num_nodes, vectors, wrap_idmap);
     }
 
-    // Generate random vectors
+    std::string write_hnsw_flat_with_ids(int num_nodes, int M, int dim, const std::vector<int64_t>& ids) {
+        std::string path = test_dir + "/test_graph.vi";
+        auto vectors = generate_random_vectors(num_nodes, dim);
+        return test::build_hnsw_index_file_with_ids(path, dim, M, num_nodes, vectors, ids);
+    }
+
     std::vector<float> generate_random_vectors(int n, int dim) {
         std::mt19937 rng(42);
         std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
@@ -106,7 +83,10 @@ TEST_F(HNSWGraphAccessorTest, test_load_faiss_hnsw_flat) {
 }
 
 TEST_F(HNSWGraphAccessorTest, test_load_faiss_hnsw_with_idmap) {
-    auto path = write_hnsw_flat(50, 8, 4, true);
+    // With IDMap wrapping: external IDs are 0, 2, 4, 6, ...
+    std::vector<int64_t> ids(50);
+    for (int i = 0; i < 50; i++) ids[i] = i * 2;
+    auto path = write_hnsw_flat_with_ids(50, 8, 4, ids);
 
     HNSWGraphAccessor accessor;
     auto status = accessor.init(path);
@@ -115,7 +95,6 @@ TEST_F(HNSWGraphAccessorTest, test_load_faiss_hnsw_with_idmap) {
     ASSERT_EQ(accessor.num_nodes(), 50);
     ASSERT_TRUE(accessor.has_id_map());
 
-    // External IDs should be 0, 2, 4, 6, ...
     ASSERT_EQ(accessor.map_to_external_id(0), 0);
     ASSERT_EQ(accessor.map_to_external_id(1), 2);
     ASSERT_EQ(accessor.map_to_external_id(2), 4);
@@ -212,7 +191,6 @@ TEST_F(HNSWGraphAccessorTest, test_map_to_external_id_no_map) {
     ASSERT_OK(accessor.init(path));
     ASSERT_FALSE(accessor.has_id_map());
 
-    // Without IDMap, internal ID = external ID
     ASSERT_EQ(accessor.map_to_external_id(0), 0);
     ASSERT_EQ(accessor.map_to_external_id(5), 5);
     ASSERT_EQ(accessor.map_to_external_id(-1), -1);
@@ -224,11 +202,9 @@ TEST_F(HNSWGraphAccessorTest, test_node_levels) {
     HNSWGraphAccessor accessor;
     ASSERT_OK(accessor.init(path));
 
-    // Entry point should have the highest level
     int entry_level = accessor.node_level(accessor.entry_point());
     ASSERT_GE(entry_level, 1);
 
-    // All nodes should have at least level 1
     for (int i = 0; i < accessor.num_nodes(); i++) {
         ASSERT_GE(accessor.node_level(i), 1);
     }

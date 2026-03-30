@@ -27,12 +27,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "faiss/IndexFlat.h"
-#include "faiss/IndexHNSW.h"
-#include "faiss/IndexIDMap.h"
-#include "faiss/index_io.h"
 #include "fs/fs.h"
 #include "fs/fs_util.h"
+#include "hnsw_test_helper.h"
 #include "storage/index/vector/search_predicate_evaluator.h"
 #include "testutil/assert.h"
 
@@ -76,29 +73,10 @@ protected:
         }
     }
 
-    // Build a real Faiss HNSW index using Faiss API and write to disk.
-    // Optionally wraps in IndexIDMap (as TenANN does with EnableCustomRowId).
     std::string build_hnsw_index(int n, int M, int dim, const std::vector<float>& vectors,
                                  bool with_idmap = false) {
         std::string path = test_dir + "/acorn_test.vi";
-
-        auto* hnsw = new faiss::IndexHNSWFlat(dim, M);
-        hnsw->hnsw.efConstruction = 40;
-        hnsw->hnsw.efSearch = 40;
-
-        if (with_idmap) {
-            faiss::IndexIDMap id_map(hnsw);
-            std::vector<int64_t> ids(n);
-            std::iota(ids.begin(), ids.end(), 0);
-            id_map.add_with_ids(n, vectors.data(), ids.data());
-            faiss::write_index(&id_map, path.c_str());
-            delete hnsw;
-        } else {
-            hnsw->add(n, vectors.data());
-            faiss::write_index(hnsw, path.c_str());
-            delete hnsw;
-        }
-        return path;
+        return test::build_hnsw_index_file(path, dim, M, n, vectors, with_idmap);
     }
 
     std::vector<int> brute_force_knn(const float* vectors, int n, int dim, const float* query, int k) {
@@ -150,7 +128,6 @@ TEST_F(AcornIndexReaderTest, test_search_without_predicate) {
 
     ASSERT_GT(result.row_ids.size(), 0);
     ASSERT_LE(result.row_ids.size(), 5);
-    // First result should be node 0 (exact match with query = vectors[0])
     ASSERT_EQ(result.row_ids[0], 0);
     ASSERT_FLOAT_EQ(result.distances[0], 0.0f);
 }
@@ -175,7 +152,6 @@ TEST_F(AcornIndexReaderTest, test_search_with_idmap) {
     ASSERT_OK(reader.search(query, params, result));
 
     ASSERT_GT(result.row_ids.size(), 0);
-    // With IDMap, row IDs should match the external IDs we provided (0, 1, 2, ...)
     ASSERT_EQ(result.row_ids[0], 0);
     ASSERT_FLOAT_EQ(result.distances[0], 0.0f);
 }
@@ -184,7 +160,6 @@ TEST_F(AcornIndexReaderTest, test_search_with_radius_predicate) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
     auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors, true);
 
-    // Half of nodes inside 5km, half far away
     std::vector<double> lats(kNumNodes), lngs(kNumNodes);
     for (int i = 0; i < kNumNodes; i++) {
         if (i % 2 == 0) {
