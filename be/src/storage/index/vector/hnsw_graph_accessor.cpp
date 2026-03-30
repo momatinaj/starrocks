@@ -183,18 +183,49 @@ Status HNSWGraphAccessor::init(const std::string& index_path, bool load_vectors)
     if (!read_vector(file, _assign_probas)) {
         return Status::Corruption("Failed to read assign_probas from: " + index_path);
     }
+    LOG(INFO) << "HNSW parse: assign_probas.size=" << _assign_probas.size()
+              << " file_pos=" << file.tellg();
+
     if (!read_vector(file, _cum_nneighbor_per_level)) {
         return Status::Corruption("Failed to read cum_nneighbor_per_level from: " + index_path);
     }
+    {
+        std::string vals;
+        for (size_t i = 0; i < _cum_nneighbor_per_level.size(); i++) {
+            if (i > 0) vals += ",";
+            vals += std::to_string(_cum_nneighbor_per_level[i]);
+        }
+        LOG(INFO) << "HNSW parse: cum_nneighbor_per_level.size=" << _cum_nneighbor_per_level.size()
+                  << " values=[" << vals << "] file_pos=" << file.tellg();
+    }
+
     if (!read_vector(file, _levels)) {
         return Status::Corruption("Failed to read levels from: " + index_path);
     }
+    LOG(INFO) << "HNSW parse: levels.size=" << _levels.size()
+              << " file_pos=" << file.tellg();
+
     if (!read_vector(file, _offsets)) {
         return Status::Corruption("Failed to read offsets from: " + index_path);
     }
+    LOG(INFO) << "HNSW parse: offsets.size=" << _offsets.size()
+              << " first=" << (_offsets.empty() ? 0 : _offsets[0])
+              << " last=" << (_offsets.empty() ? 0 : _offsets.back())
+              << " file_pos=" << file.tellg();
+
     if (!read_vector(file, _neighbors)) {
         return Status::Corruption("Failed to read neighbors from: " + index_path);
     }
+    {
+        int valid_count = 0;
+        for (auto n : _neighbors) {
+            if (n >= 0) valid_count++;
+        }
+        LOG(INFO) << "HNSW parse: neighbors.size=" << _neighbors.size()
+                  << " valid_neighbors=" << valid_count
+                  << " file_pos=" << file.tellg();
+    }
+
     if (!read_val(file, _entry_point)) {
         return Status::Corruption("Failed to read entry_point from: " + index_path);
     }
@@ -211,6 +242,10 @@ Status HNSWGraphAccessor::init(const std::string& index_path, bool load_vectors)
     if (!read_val(file, upper_beam_deprecated)) {
         return Status::Corruption("Failed to read upper_beam from: " + index_path);
     }
+    LOG(INFO) << "HNSW parse scalars: entry_point=" << _entry_point
+              << " max_level=" << _max_level
+              << " efConstruction=" << _ef_construction
+              << " efSearch=" << _ef_search;
 
     // --- Phase 4: Read storage (IndexFlat) ---
     // IndexHNSW stores vectors in an inner IndexFlat (the "storage" field).
@@ -284,6 +319,34 @@ Status HNSWGraphAccessor::init(const std::string& index_path, bool load_vectors)
     if (_offsets.size() != _levels.size() + 1) {
         return Status::Corruption(fmt::format("Offsets size mismatch: offsets={} levels={} in: {}", _offsets.size(),
                                               _levels.size(), index_path));
+    }
+
+    // --- Recovery: if M=0, infer from offset spans ---
+    // M=0 means cum_nneighbor_per_level[0] was 0 or 1, which is invalid for
+    // any real HNSW graph. Infer M from a level-1-only node's neighbor slot count.
+    if (_M == 0 && _offsets.size() > 1 && !_neighbors.empty()) {
+        LOG(WARNING) << "HNSW M=0 detected — attempting recovery from offset spans";
+        for (size_t i = 0; i < _levels.size(); i++) {
+            if (_levels[i] == 1 && i + 1 < _offsets.size()) {
+                size_t span = _offsets[i + 1] - _offsets[i];
+                if (span >= 2) {
+                    _M = static_cast<int>(span / 2);
+                    _cum_nneighbor_per_level.clear();
+                    int nn = 0;
+                    for (int l = 0; l <= _max_level; l++) {
+                        nn += (l == 0) ? 2 * _M : _M;
+                        _cum_nneighbor_per_level.push_back(nn);
+                    }
+                    LOG(WARNING) << "HNSW recovered M=" << _M << " from node " << i
+                                 << " (offset_span=" << span << "). Rebuilt cum_nneighbor_per_level with "
+                                 << _cum_nneighbor_per_level.size() << " levels";
+                    break;
+                }
+            }
+        }
+        if (_M == 0) {
+            LOG(ERROR) << "HNSW M=0 recovery FAILED — no level-1 nodes found with valid spans";
+        }
     }
 
     LOG(INFO) << "HNSWGraphAccessor loaded: ntotal=" << _ntotal << " dim=" << _dim << " M=" << _M
