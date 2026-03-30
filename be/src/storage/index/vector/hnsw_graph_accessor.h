@@ -27,8 +27,12 @@ namespace starrocks {
 // Provides adjacency list access, 2-hop expansion, and basic graph queries
 // for use by the ACORN-1 search algorithm.
 //
+// Uses Faiss's own read_index() API to correctly parse all index variants
+// (IndexHNSWFlat, IndexIDMap+IndexHNSW, IndexPreTransform+IndexHNSW, etc.)
+// produced by TenANN.
+//
 // When load_vectors=true is passed to init(), also extracts the stored
-// flat vector data from the IndexFlat storage section of IndexHNSWFlat files.
+// flat vector data from the IndexFlat storage inside IndexHNSWFlat.
 class HNSWGraphAccessor {
 public:
     using node_id_t = int32_t;
@@ -71,28 +75,14 @@ public:
     int64_t ntotal() const { return _ntotal; }
     bool has_stored_vectors() const { return !_stored_vectors.empty(); }
 
+    // ID mapping (from internal Faiss node IDs to external row IDs).
+    // If no IndexIDMap wrapping was present, returns internal_id unchanged.
+    int64_t map_to_external_id(node_id_t internal_id) const;
+    bool has_id_map() const { return !_id_map.empty(); }
+
     bool is_valid() const { return _valid; }
 
 private:
-    // Faiss HNSW FourCC values
-    static constexpr uint32_t kFourCC_IHNf = 0x664E4849; // "IHNf"
-    static constexpr uint32_t kFourCC_IHNs = 0x734E4849; // "IHNs"
-    static constexpr uint32_t kFourCC_IHNp = 0x704E4849; // "IHNp"
-
-    // Index header size: d(4) + ntotal(8) + dummy(8) + dummy(8) + is_trained(1) + metric_type(4) = 33
-    static constexpr size_t kIndexHeaderSize = 33;
-
-    // Parse helpers
-    Status _parse_file(const std::string& path, bool load_vectors);
-    Status _read_hnsw_graph(const uint8_t* data, size_t size, size_t& offset);
-    Status _read_flat_storage(const uint8_t* data, size_t size, size_t& offset);
-
-    template <typename T>
-    static Status _read_value(const uint8_t* data, size_t size, size_t& offset, T& out);
-
-    template <typename T>
-    static Status _read_vector(const uint8_t* data, size_t size, size_t& offset, std::vector<T>& out);
-
     // Compute neighbor range in the flat neighbors array for (node_id, level).
     void _neighbor_range(node_id_t node_id, int level, size_t& begin, size_t& end) const;
 
@@ -102,6 +92,9 @@ private:
     std::vector<int> _levels;            // level of each node (base=1 in Faiss)
     std::vector<size_t> _offsets;         // offsets into _neighbors
     std::vector<node_id_t> _neighbors;    // flat neighbor array
+
+    // ID mapping from IndexIDMap (internal_id -> external_row_id)
+    std::vector<int64_t> _id_map;
 
     // Stored vectors (from IndexFlat storage, only when load_vectors=true)
     std::vector<float> _stored_vectors;

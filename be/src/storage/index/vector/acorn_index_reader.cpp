@@ -70,7 +70,10 @@ std::vector<AcornIndexReader::node_id_t> AcornIndexReader::_get_neighbors_acorn(
     std::vector<node_id_t> filtered;
     filtered.reserve(expanded.size());
     for (auto n : expanded) {
-        if (_predicate->evaluate(n)) {
+        // Predicate evaluator is indexed by external row IDs (segment row numbers),
+        // but graph nodes use internal Faiss IDs. Map before evaluating.
+        int64_t ext_id = _graph.map_to_external_id(n);
+        if (ext_id >= 0 && _predicate->evaluate(ext_id)) {
             filtered.push_back(n);
         }
     }
@@ -152,17 +155,22 @@ void AcornIndexReader::_search_multi_level(const float* query, int k, int ef_sea
     // If predicate is active, filter results to only predicate-satisfying nodes
     std::vector<NodeDist> filtered;
     for (const auto& nd : candidates) {
-        if (!_predicate || _predicate->evaluate(nd.id)) {
+        if (!_predicate) {
             filtered.push_back(nd);
+        } else {
+            int64_t ext_id = _graph.map_to_external_id(nd.id);
+            if (ext_id >= 0 && _predicate->evaluate(ext_id)) {
+                filtered.push_back(nd);
+            }
         }
     }
 
-    // Return top-k
+    // Return top-k, mapping internal node IDs to external row IDs
     int result_count = std::min(k, static_cast<int>(filtered.size()));
     result.row_ids.reserve(result_count);
     result.distances.reserve(result_count);
     for (int i = 0; i < result_count; i++) {
-        result.row_ids.push_back(filtered[i].id);
+        result.row_ids.push_back(_graph.map_to_external_id(filtered[i].id));
         result.distances.push_back(filtered[i].distance);
     }
 }

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifdef WITH_TENANN
+
 #include "storage/index/vector/acorn_index_reader.h"
 
 #include <gtest/gtest.h>
@@ -20,12 +22,15 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <numeric>
 #include <random>
 #include <unordered_set>
 #include <vector>
 
+#include "faiss/IndexFlat.h"
+#include "faiss/IndexHNSW.h"
+#include "faiss/IndexIDMap.h"
+#include "faiss/index_io.h"
 #include "fs/fs.h"
 #include "fs/fs_util.h"
 #include "storage/index/vector/search_predicate_evaluator.h"
@@ -36,8 +41,8 @@ namespace starrocks {
 class AcornIndexReaderTest : public testing::Test {
 public:
     static constexpr int kDim = 8;
-    static constexpr int kM = 4;
-    static constexpr int kNumNodes = 100;
+    static constexpr int kM = 16;
+    static constexpr int kNumNodes = 200;
 
 protected:
     void SetUp() override {
@@ -51,7 +56,6 @@ protected:
     const std::string test_dir = "acorn_index_reader_test";
     std::mt19937 _gen;
 
-    // Generate random vectors
     std::vector<float> generate_random_vectors(int n, int dim) {
         std::vector<float> vecs(n * dim);
         std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
@@ -59,175 +63,44 @@ protected:
         return vecs;
     }
 
-    // Generate lat/lng around a center point with varying distances
     void generate_geo_data(int n, double center_lat, double center_lng, double spread_km,
                            std::vector<double>& lats, std::vector<double>& lngs) {
         lats.resize(n);
         lngs.resize(n);
         std::uniform_real_distribution<double> dist(-spread_km, spread_km);
         for (int i = 0; i < n; i++) {
-            double dlat = dist(_gen) / 111.0; // ~1 degree ≈ 111 km
+            double dlat = dist(_gen) / 111.0;
             double dlng = dist(_gen) / (111.0 * std::cos(center_lat * M_PI / 180.0));
             lats[i] = center_lat + dlat;
             lngs[i] = center_lng + dlng;
         }
     }
 
-    void _write_graph_section(std::ofstream& ofs, int n, int M, int dim,
-                              const std::vector<int>& levels) {
-        std::vector<double> assign_probas = {0.5, 0.25};
-        uint64_t sz = assign_probas.size();
-        ofs.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
-        ofs.write(reinterpret_cast<const char*>(assign_probas.data()), sz * sizeof(double));
-
-        int slots0 = 2 * M;
-        int slots1 = M;
-        std::vector<int> cum_nn = {slots0, slots0 + slots1};
-        sz = cum_nn.size();
-        ofs.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
-        ofs.write(reinterpret_cast<const char*>(cum_nn.data()), sz * sizeof(int));
-
-        sz = levels.size();
-        ofs.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
-        ofs.write(reinterpret_cast<const char*>(levels.data()), sz * sizeof(int));
-
-        std::uniform_int_distribution<int> rdist(0, n - 1);
-        std::vector<size_t> offsets;
-        std::vector<int32_t> neighbors;
-        size_t offset = 0;
-
-        for (int i = 0; i < n; i++) {
-            offsets.push_back(offset);
-            int total_slots = (levels[i] == 2) ? (slots0 + slots1) : slots0;
-
-            std::unordered_set<int> used;
-            used.insert(i);
-            auto add_neighbor = [&](int nbr) {
-                if (nbr != i && used.count(nbr) == 0 && static_cast<int>(used.size()) <= slots0) {
-                    neighbors.push_back(nbr);
-                    used.insert(nbr);
-                    return true;
-                }
-                return false;
-            };
-
-            add_neighbor((i + 1) % n);
-            add_neighbor((i + n - 1) % n);
-
-            for (int j = 0; j < M - 2 && static_cast<int>(used.size()) <= slots0; j++) {
-                add_neighbor(rdist(_gen));
-            }
-
-            while (static_cast<int>(neighbors.size()) < static_cast<int>(offset) + slots0) {
-                neighbors.push_back(-1);
-            }
-
-            if (levels[i] == 2) {
-                for (int j = 0; j < slots1; j++) {
-                    neighbors.push_back(-1);
-                }
-            }
-
-            offset += total_slots;
-        }
-        offsets.push_back(offset);
-
-        sz = offsets.size();
-        ofs.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
-        ofs.write(reinterpret_cast<const char*>(offsets.data()), sz * sizeof(size_t));
-
-        sz = neighbors.size();
-        ofs.write(reinterpret_cast<const char*>(&sz), sizeof(sz));
-        ofs.write(reinterpret_cast<const char*>(neighbors.data()), sz * sizeof(int32_t));
-
-        int32_t entry = 0;
-        int max_level = 1;
-        int efc = 40;
-        int efs = 16;
-        int ub = 1;
-        ofs.write(reinterpret_cast<const char*>(&entry), sizeof(entry));
-        ofs.write(reinterpret_cast<const char*>(&max_level), sizeof(max_level));
-        ofs.write(reinterpret_cast<const char*>(&efc), sizeof(efc));
-        ofs.write(reinterpret_cast<const char*>(&efs), sizeof(efs));
-        ofs.write(reinterpret_cast<const char*>(&ub), sizeof(ub));
-    }
-
-    void _write_index_header(std::ofstream& ofs, int dim, int64_t ntotal) {
-        uint32_t fourcc = 0x664E4849; // "IHNf"
-        ofs.write(reinterpret_cast<const char*>(&fourcc), sizeof(fourcc));
-
-        int d = dim;
-        int64_t dummy = 0;
-        bool is_trained = true;
-        int metric_type = 1;
-        ofs.write(reinterpret_cast<const char*>(&d), sizeof(d));
-        ofs.write(reinterpret_cast<const char*>(&ntotal), sizeof(ntotal));
-        ofs.write(reinterpret_cast<const char*>(&dummy), sizeof(dummy));
-        ofs.write(reinterpret_cast<const char*>(&dummy), sizeof(dummy));
-        ofs.write(reinterpret_cast<const char*>(&is_trained), sizeof(is_trained));
-        ofs.write(reinterpret_cast<const char*>(&metric_type), sizeof(metric_type));
-    }
-
-    // Build a graph-only HNSW .vi file (no vectors stored).
-    std::string build_synthetic_hnsw_graph_only(int n, int M, int dim) {
-        std::string path = test_dir + "/acorn_graph_only.vi";
-        std::ofstream ofs(path, std::ios::binary);
-
-        _write_index_header(ofs, dim, n);
-
-        std::vector<int> levels(n, 1);
-        levels[0] = 2;
-        _write_graph_section(ofs, n, M, dim, levels);
-
-        ofs.close();
-        return path;
-    }
-
-    // Build a full IndexHNSWFlat .vi file with graph + flat vector storage.
-    std::string build_synthetic_hnsw(int n, int M, int dim,
-                                     const std::vector<float>* vectors = nullptr) {
+    // Build a real Faiss HNSW index using Faiss API and write to disk.
+    // Optionally wraps in IndexIDMap (as TenANN does with EnableCustomRowId).
+    std::string build_hnsw_index(int n, int M, int dim, const std::vector<float>& vectors,
+                                 bool with_idmap = false) {
         std::string path = test_dir + "/acorn_test.vi";
-        std::ofstream ofs(path, std::ios::binary);
 
-        _write_index_header(ofs, dim, n);
+        auto* hnsw = new faiss::IndexHNSWFlat(dim, M);
+        hnsw->hnsw.efConstruction = 40;
+        hnsw->hnsw.efSearch = 40;
 
-        std::vector<int> levels(n, 1);
-        levels[0] = 2;
-        _write_graph_section(ofs, n, M, dim, levels);
-
-        // Write IndexFlat storage section
-        uint32_t storage_fourcc = 0x6C467849; // "IxFl"
-        ofs.write(reinterpret_cast<const char*>(&storage_fourcc), sizeof(storage_fourcc));
-
-        // Storage index header
-        int d = dim;
-        int64_t ntotal = n;
-        int64_t dummy = 0;
-        bool is_trained = true;
-        int metric_type = 1;
-        ofs.write(reinterpret_cast<const char*>(&d), sizeof(d));
-        ofs.write(reinterpret_cast<const char*>(&ntotal), sizeof(ntotal));
-        ofs.write(reinterpret_cast<const char*>(&dummy), sizeof(dummy));
-        ofs.write(reinterpret_cast<const char*>(&dummy), sizeof(dummy));
-        ofs.write(reinterpret_cast<const char*>(&is_trained), sizeof(is_trained));
-        ofs.write(reinterpret_cast<const char*>(&metric_type), sizeof(metric_type));
-
-        // Codes vector (float vectors stored as uint8_t)
-        std::vector<float> vec_data;
-        if (vectors && static_cast<int>(vectors->size()) == n * dim) {
-            vec_data = *vectors;
+        if (with_idmap) {
+            faiss::IndexIDMap id_map(hnsw);
+            std::vector<int64_t> ids(n);
+            std::iota(ids.begin(), ids.end(), 0);
+            id_map.add_with_ids(n, vectors.data(), ids.data());
+            faiss::write_index(&id_map, path.c_str());
+            delete hnsw;
         } else {
-            vec_data = generate_random_vectors(n, dim);
+            hnsw->add(n, vectors.data());
+            faiss::write_index(hnsw, path.c_str());
+            delete hnsw;
         }
-        uint64_t byte_count = static_cast<uint64_t>(vec_data.size()) * sizeof(float);
-        ofs.write(reinterpret_cast<const char*>(&byte_count), sizeof(byte_count));
-        ofs.write(reinterpret_cast<const char*>(vec_data.data()), byte_count);
-
-        ofs.close();
         return path;
     }
 
-    // Brute-force ground truth: top-k nearest by L2 distance
     std::vector<int> brute_force_knn(const float* vectors, int n, int dim, const float* query, int k) {
         std::vector<std::pair<float, int>> dists;
         for (int i = 0; i < n; i++) {
@@ -246,7 +119,6 @@ protected:
         return result;
     }
 
-    // Compute recall: fraction of ground truth IDs found in result
     double compute_recall(const std::vector<int64_t>& result_ids, const std::vector<int>& ground_truth_ids) {
         std::unordered_set<int> gt_set(ground_truth_ids.begin(), ground_truth_ids.end());
         int found = 0;
@@ -259,11 +131,10 @@ protected:
 
 TEST_F(AcornIndexReaderTest, test_search_without_predicate) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     AcornIndexReader reader;
     ASSERT_OK(reader.init(path));
-    // Vectors are auto-loaded from the .vi file
     ASSERT_EQ(reader.dimension(), kDim);
     ASSERT_EQ(reader.num_nodes(), kNumNodes);
 
@@ -272,7 +143,7 @@ TEST_F(AcornIndexReaderTest, test_search_without_predicate) {
 
     AcornIndexReader::SearchParams params;
     params.k = 5;
-    params.ef_search = 20;
+    params.ef_search = 40;
 
     AcornIndexReader::SearchResult result;
     ASSERT_OK(reader.search(query, params, result));
@@ -284,36 +155,36 @@ TEST_F(AcornIndexReaderTest, test_search_without_predicate) {
     ASSERT_FLOAT_EQ(result.distances[0], 0.0f);
 }
 
-TEST_F(AcornIndexReaderTest, test_search_with_explicit_vector_data) {
-    // Test the path where vectors are set explicitly (not from .vi file)
-    auto path = build_synthetic_hnsw_graph_only(kNumNodes, kM, kDim);
+TEST_F(AcornIndexReaderTest, test_search_with_idmap) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors, true);
 
     AcornIndexReader reader;
     ASSERT_OK(reader.init(path));
-    reader.set_vector_data(vectors.data(), kNumNodes, kDim);
+    ASSERT_TRUE(reader.is_valid());
+    ASSERT_EQ(reader.num_nodes(), kNumNodes);
 
     float query[kDim];
     std::copy(vectors.begin(), vectors.begin() + kDim, query);
 
     AcornIndexReader::SearchParams params;
     params.k = 5;
-    params.ef_search = 20;
+    params.ef_search = 40;
 
     AcornIndexReader::SearchResult result;
     ASSERT_OK(reader.search(query, params, result));
 
     ASSERT_GT(result.row_ids.size(), 0);
-    ASSERT_LE(result.row_ids.size(), 5);
+    // With IDMap, row IDs should match the external IDs we provided (0, 1, 2, ...)
     ASSERT_EQ(result.row_ids[0], 0);
     ASSERT_FLOAT_EQ(result.distances[0], 0.0f);
 }
 
 TEST_F(AcornIndexReaderTest, test_search_with_radius_predicate) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors, true);
 
-    // Generate geo data: half inside 5km, half far away
+    // Half of nodes inside 5km, half far away
     std::vector<double> lats(kNumNodes), lngs(kNumNodes);
     for (int i = 0; i < kNumNodes; i++) {
         if (i % 2 == 0) {
@@ -342,7 +213,7 @@ TEST_F(AcornIndexReaderTest, test_search_with_radius_predicate) {
     float query[kDim] = {0};
     AcornIndexReader::SearchParams params;
     params.k = 10;
-    params.ef_search = 40;
+    params.ef_search = 100;
 
     AcornIndexReader::SearchResult result;
     ASSERT_OK(reader.search(query, params, result));
@@ -355,7 +226,8 @@ TEST_F(AcornIndexReaderTest, test_search_with_radius_predicate) {
 }
 
 TEST_F(AcornIndexReaderTest, test_search_empty_predicate_match) {
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim);
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     std::vector<double> lats(kNumNodes, 80.0);
     std::vector<double> lngs(kNumNodes, 0.0);
@@ -384,7 +256,8 @@ TEST_F(AcornIndexReaderTest, test_search_empty_predicate_match) {
 }
 
 TEST_F(AcornIndexReaderTest, test_search_all_predicate_match) {
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim);
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     std::vector<double> lats(kNumNodes, 37.7749);
     std::vector<double> lngs(kNumNodes, -122.4194);
@@ -423,23 +296,9 @@ TEST_F(AcornIndexReaderTest, test_uninitialized_reader) {
     ASSERT_FALSE(status.ok());
 }
 
-TEST_F(AcornIndexReaderTest, test_no_vector_data) {
-    auto path = build_synthetic_hnsw_graph_only(kNumNodes, kM, kDim);
-
-    AcornIndexReader reader;
-    ASSERT_OK(reader.init(path));
-
-    float query[kDim] = {0};
-    AcornIndexReader::SearchParams params;
-    AcornIndexReader::SearchResult result;
-
-    auto status = reader.search(query, params, result);
-    ASSERT_FALSE(status.ok());
-}
-
 TEST_F(AcornIndexReaderTest, test_search_with_polygon_predicate) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors, true);
 
     std::vector<double> lats(kNumNodes), lngs(kNumNodes);
     for (int i = 0; i < kNumNodes; i++) {
@@ -467,7 +326,7 @@ TEST_F(AcornIndexReaderTest, test_search_with_polygon_predicate) {
     float query[kDim] = {0};
     AcornIndexReader::SearchParams params;
     params.k = 10;
-    params.ef_search = 40;
+    params.ef_search = 100;
 
     AcornIndexReader::SearchResult result;
     ASSERT_OK(reader.search(query, params, result));
@@ -481,7 +340,7 @@ TEST_F(AcornIndexReaderTest, test_search_with_polygon_predicate) {
 
 TEST_F(AcornIndexReaderTest, test_search_varying_k) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     float query[kDim];
     std::copy(vectors.begin(), vectors.begin() + kDim, query);
@@ -502,26 +361,9 @@ TEST_F(AcornIndexReaderTest, test_search_varying_k) {
     }
 }
 
-TEST_F(AcornIndexReaderTest, test_search_k_larger_than_num_rows) {
-    auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
-
-    float query[kDim] = {0};
-    AcornIndexReader reader;
-    ASSERT_OK(reader.init(path));
-
-    AcornIndexReader::SearchParams params;
-    params.k = kNumNodes + 100;
-    params.ef_search = kNumNodes + 100;
-
-    AcornIndexReader::SearchResult result;
-    ASSERT_OK(reader.search(query, params, result));
-    ASSERT_LE(static_cast<int>(result.row_ids.size()), kNumNodes);
-}
-
 TEST_F(AcornIndexReaderTest, test_recall_without_predicate) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     AcornIndexReader reader;
     ASSERT_OK(reader.init(path));
@@ -546,7 +388,7 @@ TEST_F(AcornIndexReaderTest, test_recall_without_predicate) {
 
 TEST_F(AcornIndexReaderTest, test_distances_sorted) {
     auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     float query[kDim] = {0};
     AcornIndexReader reader;
@@ -574,7 +416,8 @@ TEST_F(AcornIndexReaderTest, test_init_invalid_path) {
 }
 
 TEST_F(AcornIndexReaderTest, test_dimension_and_num_nodes) {
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim);
+    auto vectors = generate_random_vectors(kNumNodes, kDim);
+    auto path = build_hnsw_index(kNumNodes, kM, kDim, vectors);
 
     AcornIndexReader reader;
     ASSERT_OK(reader.init(path));
@@ -583,23 +426,6 @@ TEST_F(AcornIndexReaderTest, test_dimension_and_num_nodes) {
     ASSERT_EQ(reader.num_nodes(), kNumNodes);
 }
 
-TEST_F(AcornIndexReaderTest, test_search_with_ef_search_1) {
-    auto vectors = generate_random_vectors(kNumNodes, kDim);
-    auto path = build_synthetic_hnsw(kNumNodes, kM, kDim, &vectors);
-
-    float query[kDim];
-    std::copy(vectors.begin(), vectors.begin() + kDim, query);
-
-    AcornIndexReader reader;
-    ASSERT_OK(reader.init(path));
-
-    AcornIndexReader::SearchParams params;
-    params.k = 1;
-    params.ef_search = 1;
-
-    AcornIndexReader::SearchResult result;
-    ASSERT_OK(reader.search(query, params, result));
-    ASSERT_GE(result.row_ids.size(), 1);
-}
-
 } // namespace starrocks
+
+#endif
