@@ -113,14 +113,15 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_standard
     return sorted;
 }
 
-// ACORN-1 search with hybrid exploration — used for level 0.
+// ACORN-1 search with strict predicate-aware traversal — used for level 0.
 //
-// Key design (per ACORN paper Algorithm 3, with practical enhancement):
-//   - Uses 2-hop expanded neighbor lists for broader graph reach
-//   - ALL expanded neighbors are explored as candidates (for graph navigation)
-//   - Only predicate-satisfying nodes enter the RESULT set
-//   - This prevents the search from dead-ending when the predicate is selective,
-//     while still ensuring results satisfy the spatial constraint
+// Key design (exactly matching ACORN paper Algorithm 2/3 for gamma=1):
+//   - Uses 2-hop expanded neighbor lists to look across the graph.
+//   - ONLY predicate-satisfying nodes are added to the candidate queue (C).
+//   - This prevents the search from wasting steps on non-qualifying nodes.
+//   - Non-qualifying nodes are implicitly used as "stepping stones" because
+//     they are traversed to find the 2-hop neighbors, but they NEVER enter
+//     the candidate queue themselves.
 std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(const float* query, node_id_t entry,
                                                                               int ef, int level) {
     auto cmp_min = [](const NodeDist& a, const NodeDist& b) { return a.distance > b.distance; };
@@ -133,6 +134,8 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
     std::unordered_set<node_id_t> visited;
 
     float d = _compute_distance(query, entry);
+    // The entry point might not satisfy the predicate, but we must push it to
+    // candidates to start the search. It acts as the initial stepping stone.
     candidates.push({entry, d});
     if (_satisfies_predicate(entry)) {
         results.push({entry, d});
@@ -140,7 +143,7 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
     visited.insert(entry);
 
     // Limit total visited nodes to prevent runaway search with very selective predicates.
-    // With 100K nodes and ef=400, this caps at ~4000 nodes (4% of data).
+    // With ef=400, this caps at 4000 nodes.
     const int max_visits = std::max(2000, ef * 10);
     int visit_count = 1;
 
@@ -155,7 +158,7 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
             break;
         }
 
-        // 2-hop expansion: explore ALL expanded neighbors (regardless of predicate)
+        // ACORN-1 logic: Look at all nodes within 2 hops (gamma=1).
         auto expanded = _graph.expanded_neighbors(current.id, level);
 
         for (auto n : expanded) {
@@ -163,24 +166,20 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
             visited.insert(n);
             visit_count++;
 
-            float dist = _compute_distance(query, n);
-
+            // CRITICAL: We ONLY process nodes that satisfy the predicate.
+            // Non-qualifying nodes are completely ignored here (they were
+            // already used implicitly as bridges to find the 2-hop neighbors).
             if (_satisfies_predicate(n)) {
-                // Qualifying node: add to both candidates (for navigation) and results
+                float dist = _compute_distance(query, n);
+                
                 float worst = results.empty() ? std::numeric_limits<float>::max() : results.top().distance;
                 if (static_cast<int>(results.size()) < ef || dist < worst) {
+                    // Valid node: add to BOTH candidates (to continue search) and results
                     candidates.push({n, dist});
                     results.push({n, dist});
                     if (static_cast<int>(results.size()) > ef) {
                         results.pop();
                     }
-                }
-            } else {
-                // Non-qualifying node: add to candidates ONLY (stepping stone for navigation).
-                // Only add if it's close enough to potentially lead to better qualifying nodes.
-                float worst = results.empty() ? std::numeric_limits<float>::max() : results.top().distance;
-                if (static_cast<int>(results.size()) < ef || dist < worst) {
-                    candidates.push({n, dist});
                 }
             }
         }
