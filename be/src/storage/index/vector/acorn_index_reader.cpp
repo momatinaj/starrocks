@@ -172,6 +172,12 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
         // ACORN-1 logic: Look at all nodes within 2 hops (gamma=1).
         auto expanded = _graph.expanded_neighbors(current.id, level);
 
+        if (visit_count <= 2) {
+            LOG(INFO) << "ACORN expand: current=" << current.id
+                      << " expanded_size=" << expanded.size()
+                      << " 1hop_size=" << _graph.neighbors(current.id, level).size();
+        }
+
         for (auto n : expanded) {
             if (visited.count(n) > 0) continue;
             visited.insert(n);
@@ -233,6 +239,26 @@ void AcornIndexReader::_search_multi_level(const float* query, int k, int ef_sea
     int acorn_ef = _predicate ? std::max(ef_search, k * 10) : ef_search;
     LOG(INFO) << "ACORN level-0 search: acorn_ef=" << acorn_ef
               << " using " << (_predicate ? "ACORN-1 (predicate)" : "standard");
+
+    // Diagnostic: check if level-0 neighbors exist for the entry point
+    {
+        auto entry_nbrs = _graph.neighbors(entry, 0);
+        int entry_level = _graph.node_level(entry);
+        LOG(INFO) << "ACORN diag: entry=" << entry
+                  << " node_level=" << entry_level
+                  << " level0_neighbors=" << entry_nbrs.size()
+                  << " graph.num_nodes=" << _graph.num_nodes()
+                  << " graph.max_level=" << _graph.max_level()
+                  << " graph.M=" << _graph.M();
+        if (!entry_nbrs.empty()) {
+            std::string first_few;
+            for (int ii = 0; ii < std::min(5, static_cast<int>(entry_nbrs.size())); ii++) {
+                if (ii > 0) first_few += ",";
+                first_few += std::to_string(entry_nbrs[ii]);
+            }
+            LOG(INFO) << "ACORN diag: first neighbors=[" << first_few << "]";
+        }
+    }
 
     auto candidates = _predicate ? _search_layer_acorn(query, entry, acorn_ef, 0)
                                  : _search_layer_standard(query, entry, ef_search, 0);
