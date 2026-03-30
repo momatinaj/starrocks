@@ -60,7 +60,18 @@ float AcornIndexReader::_compute_distance(const float* query, node_id_t node_id)
 bool AcornIndexReader::_satisfies_predicate(node_id_t node_id) const {
     if (!_predicate) return true;
     int64_t ext_id = _graph.map_to_external_id(node_id);
-    return ext_id >= 0 && _predicate->evaluate(ext_id);
+    bool result = ext_id >= 0 && _predicate->evaluate(ext_id);
+    static thread_local int pred_call_count = 0;
+    static thread_local int pred_pass_count = 0;
+    pred_call_count++;
+    if (result) pred_pass_count++;
+    if (pred_call_count % 5000 == 0) {
+        LOG(INFO) << "ACORN predicate stats: calls=" << pred_call_count
+                  << " pass=" << pred_pass_count
+                  << " rate=" << (100.0 * pred_pass_count / pred_call_count) << "%"
+                  << " node_id=" << node_id << " ext_id=" << ext_id;
+    }
+    return result;
 }
 
 // Standard HNSW greedy search — used for upper levels (>= 1).
@@ -185,13 +196,20 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
         }
     }
 
+    int total_qualifying = 0;
     std::vector<NodeDist> sorted;
     sorted.reserve(results.size());
     while (!results.empty()) {
         sorted.push_back(results.top());
         results.pop();
+        total_qualifying++;
     }
     std::sort(sorted.begin(), sorted.end());
+    LOG(INFO) << "ACORN _search_layer_acorn stats: visited=" << visit_count
+              << "/" << max_visits
+              << " qualifying_found=" << total_qualifying
+              << " candidates_remaining=" << candidates.size()
+              << " ef=" << ef;
     return sorted;
 }
 
@@ -199,36 +217,40 @@ void AcornIndexReader::_search_multi_level(const float* query, int k, int ef_sea
     node_id_t entry = _graph.entry_point();
     int top_level = _graph.max_level();
 
-    // Phase 1: Upper levels — STANDARD HNSW greedy search, NO predicate.
-    // Per ACORN Algorithm 2: only level 0 uses predicate-aware search.
-    // This navigates to the best entry point close to the query vector.
+    LOG(INFO) << "ACORN _search_multi_level: k=" << k << " ef_search=" << ef_search
+              << " entry=" << entry << " top_level=" << top_level
+              << " has_predicate=" << (_predicate != nullptr)
+              << " num_nodes=" << _num_rows << " dim=" << _dim;
+
     for (int level = top_level; level >= 1; level--) {
         auto layer_result = _search_layer_standard(query, entry, 1, level);
         if (!layer_result.empty()) {
             entry = layer_result[0].id;
         }
     }
+    LOG(INFO) << "ACORN after upper-level search: entry=" << entry;
 
-    // Phase 2: Level 0 — ACORN-1 search with 2-hop expansion + predicate.
-    // The caller (segment_iterator) already boosts ef_search for predicates;
-    // we apply a moderate internal bump to ensure enough exploration.
     int acorn_ef = _predicate ? std::max(ef_search, k * 10) : ef_search;
+    LOG(INFO) << "ACORN level-0 search: acorn_ef=" << acorn_ef
+              << " using " << (_predicate ? "ACORN-1 (predicate)" : "standard");
 
     auto candidates = _predicate ? _search_layer_acorn(query, entry, acorn_ef, 0)
                                  : _search_layer_standard(query, entry, ef_search, 0);
 
-    // Phase 3: Return top-k qualifying results.
-    // _search_layer_acorn already ensures all results satisfy the predicate,
-    // but we double-check for safety and map to external IDs.
+    LOG(INFO) << "ACORN level-0 returned " << candidates.size() << " candidates";
+
     int count = 0;
     for (const auto& nd : candidates) {
         if (count >= k) break;
         if (_satisfies_predicate(nd.id)) {
-            result.row_ids.push_back(_graph.map_to_external_id(nd.id));
+            int64_t ext_id = _graph.map_to_external_id(nd.id);
+            result.row_ids.push_back(ext_id);
             result.distances.push_back(nd.distance);
             count++;
         }
     }
+    LOG(INFO) << "ACORN final result: " << count << " qualifying rows out of "
+              << candidates.size() << " candidates";
 }
 
 Status AcornIndexReader::search(const float* query_vector, const SearchParams& params, SearchResult& result) {
