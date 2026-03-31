@@ -189,10 +189,10 @@ else
 fi
 
 # ACORN and Grid-HNSW clone data from B0 table (fast bulk copy) instead of
-# row-by-row INSERT. --clone-from is ignored when --skip-load is active and
-# the table already exists.
+# row-by-row INSERT. Only clone when B0 actually ran (not skipped) and
+# --skip-load is not set.
 CLONE_ARG=""
-if [ -z "$SKIP_LOAD" ]; then
+if [ -z "$SKIP_LOAD" ] && [ "$SKIP_BASELINE" -eq 0 ]; then
     CLONE_ARG="--clone-from b0"
 fi
 
