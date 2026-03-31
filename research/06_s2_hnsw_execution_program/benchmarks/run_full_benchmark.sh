@@ -8,6 +8,16 @@
 #   ./run_full_benchmark.sh                    # default 100K rows, port 9030
 #   ./run_full_benchmark.sh --rows 200000      # custom row count
 #   ./run_full_benchmark.sh --skip-load        # reuse existing tables
+#   ./run_full_benchmark.sh --skip-baseline    # skip B0 brute force (uses cached results)
+#   ./run_full_benchmark.sh --skip-load --skip-baseline  # fastest re-run
+#   ./run_full_benchmark.sh --only acorn --skip-load     # run only ACORN-1
+#   ./run_full_benchmark.sh --only grid  --skip-load     # run only Grid-HNSW
+#
+# When do you need to reload data?
+#   - First run ever:       data is generated and loaded automatically
+#   - Changed --rows/--dim: must reload (remove --skip-load)
+#   - Code changes only:    use --skip-load (tables already exist)
+#   - Different server:     must reload (no --skip-load)
 #
 
 set +e
@@ -25,6 +35,8 @@ K=10
 QUERIES=50
 WARMUP=5
 SKIP_LOAD=""
+SKIP_BASELINE=0
+ONLY_MODE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -36,6 +48,8 @@ while [[ $# -gt 0 ]]; do
         --queries) QUERIES="$2"; shift 2;;
         --warmup)  WARMUP="$2";  shift 2;;
         --skip-load) SKIP_LOAD="--skip-load"; shift;;
+        --skip-baseline) SKIP_BASELINE=1; shift;;
+        --only)    ONLY_MODE="$2"; SKIP_BASELINE=1; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -114,11 +128,30 @@ fi
 echo "   OK"
 echo ""
 
-echo "============================================================"
-echo " [1/3] B0 -- Brute Force (Ground Truth)"
-echo "============================================================"
-python3 "$BENCH" --mode b0 $COMMON_ARGS
-echo ""
+if [ "$SKIP_BASELINE" -eq 1 ]; then
+    B0_RESULTS=$(ls -t "$OUT"/b0_*.json 2>/dev/null | head -1)
+    if [ -z "$B0_RESULTS" ]; then
+        echo "WARNING: --skip-baseline used but no B0 results found in $OUT/"
+        echo "         Running baseline anyway for ground truth."
+        SKIP_BASELINE=0
+    else
+        echo ">> Skipping B0 baseline (using cached: $(basename $B0_RESULTS))"
+        echo ""
+    fi
+fi
+
+if [ "$SKIP_BASELINE" -eq 0 ]; then
+    echo "============================================================"
+    echo " [1/3] B0 -- Brute Force (Ground Truth)"
+    echo "============================================================"
+    python3 "$BENCH" --mode b0 $COMMON_ARGS
+    echo ""
+else
+    echo "============================================================"
+    echo " [1/3] B0 -- SKIPPED (cached results)"
+    echo "============================================================"
+    echo ""
+fi
 
 # ACORN and Grid-HNSW clone data from B0 table (fast bulk copy) instead of
 # row-by-row INSERT. --clone-from is ignored when --skip-load is active and
@@ -128,17 +161,21 @@ if [ -z "$SKIP_LOAD" ]; then
     CLONE_ARG="--clone-from b0"
 fi
 
-echo "============================================================"
-echo " [2/3] ACORN -- ACORN-1 Predicate-Aware Search"
-echo "============================================================"
-python3 "$BENCH" --mode acorn $COMMON_ARGS $CLONE_ARG
-echo ""
+if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "acorn" ]; then
+    echo "============================================================"
+    echo " [2/3] ACORN-1 -- Predicate-Aware Search"
+    echo "============================================================"
+    python3 "$BENCH" --mode acorn $COMMON_ARGS $CLONE_ARG
+    echo ""
+fi
 
-echo "============================================================"
-echo " [3/3] GRID -- Grid-HNSW Spatially Partitioned Search"
-echo "============================================================"
-python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
-echo ""
+if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then
+    echo "============================================================"
+    echo " [3/3] GRID -- Grid-HNSW Spatially Partitioned Search"
+    echo "============================================================"
+    python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
+    echo ""
+fi
 
 echo "============================================================"
 echo " Comparison"
