@@ -191,7 +191,7 @@ ACORN_GAMMA_INDEX_CLAUSE = """,
         "is_vector_normed" = "false",
         "M" = "16",
         "efconstruction" = "40",
-        "gamma" = "2"
+        "gamma" = "{gamma}"
     )"""
 
 GRID_HNSW_INDEX_CLAUSE = """,
@@ -210,16 +210,17 @@ GRID_HNSW_INDEX_CLAUSE = """,
 VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE
 
 
-def create_table(conn, mode, dim):
+def create_table(conn, mode, dim, gamma=2):
     tbl = table_name(mode)
     execute(conn, f"DROP TABLE IF EXISTS {tbl}")
 
+    base_mode = mode.split("_")[0] if not mode.startswith("acorn") else mode
     if mode == "b0":
         idx = ""
     elif mode == "acorn":
         idx = ACORN_INDEX_CLAUSE.format(dim=dim)
-    elif mode == "acorn_gamma":
-        idx = ACORN_GAMMA_INDEX_CLAUSE.format(dim=dim)
+    elif mode.startswith("acorn_gamma"):
+        idx = ACORN_GAMMA_INDEX_CLAUSE.format(dim=dim, gamma=gamma)
     elif mode == "grid":
         idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim)
     else:
@@ -495,15 +496,26 @@ def main():
         default=None,
         help="Clone data from an existing mode's table (e.g. --clone-from b0) instead of row-by-row INSERT",
     )
+    parser.add_argument(
+        "--gamma",
+        type=int,
+        default=2,
+        help="Gamma value for acorn_gamma mode (default: 2). Ignored for other modes.",
+    )
     args = parser.parse_args()
+
+    resolved_mode = args.mode
+    if args.mode == "acorn_gamma":
+        resolved_mode = f"acorn_gamma_{args.gamma}"
 
     os.makedirs(args.output, exist_ok=True)
 
+    gamma_str = f"  |  Gamma: {args.gamma}" if args.mode == "acorn_gamma" else ""
     print(f"\n{'='*60}")
-    print(f"Spatial-Vector Benchmark  --  Mode: {args.mode.upper()}")
+    print(f"Spatial-Vector Benchmark  --  Mode: {resolved_mode.upper()}")
     print(f"{'='*60}")
     print(f"  Host: {args.host}:{args.port}")
-    print(f"  Rows: {args.rows}  |  Dim: {args.dim}  |  K: {args.k}")
+    print(f"  Rows: {args.rows}  |  Dim: {args.dim}  |  K: {args.k}{gamma_str}")
     print(f"  Queries per spec: {args.queries}  |  Warmup: {args.warmup}")
     print()
 
@@ -521,7 +533,7 @@ def main():
 
     need_load = not args.skip_load
     if args.skip_load:
-        tbl = table_name(args.mode)
+        tbl = table_name(resolved_mode)
         try:
             execute(conn, f"SELECT 1 FROM {tbl} LIMIT 1", fetch=True)
             print("[1-3/4] Skipped (--skip-load). Reusing existing table.")
@@ -531,9 +543,9 @@ def main():
 
     if need_load and args.clone_from:
         src = table_name(args.clone_from)
-        tbl = table_name(args.mode)
+        tbl = table_name(resolved_mode)
         print(f"[2/4] Creating table {tbl} ...")
-        create_table(conn, args.mode, args.dim)
+        create_table(conn, resolved_mode, args.dim, gamma=args.gamma)
         print(f"[3/4] Cloning data: INSERT INTO {tbl} SELECT * FROM {src} ...")
         t0 = time.time()
         execute(conn, f"INSERT INTO {tbl} SELECT * FROM {src}")
@@ -546,10 +558,10 @@ def main():
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
         print("[2/4] Creating table...")
-        create_table(conn, args.mode, args.dim)
+        create_table(conn, resolved_mode, args.dim, gamma=args.gamma)
 
         print("[3/4] Loading data...")
-        load_data(conn, args.mode, lats, lngs, vecs)
+        load_data(conn, resolved_mode, lats, lngs, vecs)
 
         print("  Waiting for data to settle...")
         time.sleep(5)
@@ -560,7 +572,7 @@ def main():
 
     # Run queries
     print("[4/4] Running queries...")
-    results = run_query_set(conn, args.mode, query_vecs, args.k, args.queries, args.warmup)
+    results = run_query_set(conn, resolved_mode, query_vecs, args.k, args.queries, args.warmup)
 
     # Compute recall against B0 ground truth
     recalls = {}
@@ -581,15 +593,16 @@ def main():
         print("  No B0 ground truth found. Run B0 first for recall computation.")
 
     # Summary
-    print_summary(args.mode, args.rows, args.dim, args.k, results, recalls)
+    mode_desc = f"ACORN-gamma (gamma={args.gamma})" if args.mode == "acorn_gamma" else MODE_DESCRIPTIONS.get(resolved_mode, resolved_mode)
+    print_summary(resolved_mode, args.rows, args.dim, args.k, results, recalls)
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_file = os.path.join(args.output, f"{args.mode}_{timestamp}.json")
+    out_file = os.path.join(args.output, f"{resolved_mode}_{timestamp}.json")
 
     output_data = {
-        "mode": args.mode,
-        "mode_description": MODE_DESCRIPTIONS.get(args.mode, args.mode),
+        "mode": resolved_mode,
+        "mode_description": mode_desc,
         "host": args.host,
         "port": args.port,
         "rows": args.rows,
@@ -597,6 +610,7 @@ def main():
         "k": args.k,
         "num_queries": args.queries,
         "seed": args.seed,
+        "gamma": args.gamma if args.mode == "acorn_gamma" else None,
         "timestamp": timestamp,
         "results": {},
         "recalls": recalls,

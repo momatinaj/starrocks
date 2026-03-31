@@ -16,16 +16,43 @@ import os
 import sys
 from collections import defaultdict
 
-MODE_ORDER = ["b0", "acorn", "acorn_gamma", "grid"]
+BASE_MODE_ORDER = ["b0", "acorn", "grid"]
 MODE_LABELS = {
     "b0": "B0 Brute Force",
     "acorn": "ACORN-1",
-    "acorn_gamma": "ACORN-gamma",
     "grid": "Grid-HNSW",
 }
 
 
-def load_latest_results(results_dir):
+def discover_modes(results_dir):
+    """Scan the results directory and return full mode order + labels with any
+    acorn_gamma_N variants discovered dynamically."""
+    import re
+
+    gamma_modes = set()
+    if os.path.isdir(results_dir):
+        for fname in os.listdir(results_dir):
+            m = re.match(r"(acorn_gamma_\d+)_\d{8}_\d{6}\.json$", fname)
+            if m:
+                gamma_modes.add(m.group(1))
+
+    gamma_sorted = sorted(gamma_modes, key=lambda s: int(s.split("_")[-1]))
+
+    order = []
+    for base in BASE_MODE_ORDER:
+        order.append(base)
+        if base == "acorn":
+            order.extend(gamma_sorted)
+
+    labels = dict(MODE_LABELS)
+    for gm in gamma_sorted:
+        gamma_val = gm.split("_")[-1]
+        labels[gm] = f"ACORN-\u03b3({gamma_val})"
+
+    return order, labels
+
+
+def load_latest_results(results_dir, mode_order):
     """Load the most recent result file for each mode."""
     files_by_mode = defaultdict(list)
     if not os.path.isdir(results_dir):
@@ -35,7 +62,7 @@ def load_latest_results(results_dir):
     for fname in os.listdir(results_dir):
         if not fname.endswith(".json"):
             continue
-        for mode in MODE_ORDER:
+        for mode in mode_order:
             if fname.startswith(f"{mode}_"):
                 files_by_mode[mode].append(fname)
                 break
@@ -51,8 +78,8 @@ def load_latest_results(results_dir):
     return results
 
 
-def print_comparison(all_results):
-    available_modes = [m for m in MODE_ORDER if m in all_results]
+def print_comparison(all_results, mode_order, mode_labels):
+    available_modes = [m for m in mode_order if m in all_results]
     if not available_modes:
         print("No results found to compare.")
         return
@@ -82,7 +109,7 @@ def print_comparison(all_results):
     print(f"  Rows: {rows}  |  Dim: {dim}  |  K: {k}")
     print()
 
-    labels = [MODE_LABELS.get(m, m) for m in available_modes]
+    labels = [mode_labels.get(m, m) for m in available_modes]
 
     for qt in query_types:
         qt_desc = ref["results"][qt].get("description", qt)
@@ -125,8 +152,8 @@ def print_comparison(all_results):
 
     print("  Legend:")
     for m in available_modes:
-        desc = all_results[m].get("mode_description", MODE_LABELS.get(m, m))
-        print(f"    {MODE_LABELS.get(m, m):20s} -- {desc}")
+        desc = all_results[m].get("mode_description", mode_labels.get(m, m))
+        print(f"    {mode_labels.get(m, m):20s} -- {desc}")
     print()
 
 
@@ -139,14 +166,15 @@ def main():
     )
     args = parser.parse_args()
 
+    mode_order, mode_labels = discover_modes(args.results_dir)
     print(f"\nLoading results from {args.results_dir} ...")
-    all_results = load_latest_results(args.results_dir)
+    all_results = load_latest_results(args.results_dir, mode_order)
 
     if not all_results:
         print("No result files found. Run benchmarks first.")
         sys.exit(1)
 
-    print_comparison(all_results)
+    print_comparison(all_results, mode_order, mode_labels)
 
 
 if __name__ == "__main__":

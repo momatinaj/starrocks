@@ -11,7 +11,9 @@
 #   ./run_full_benchmark.sh --skip-baseline        # skip B0 brute force (uses cached results)
 #   ./run_full_benchmark.sh --skip-load --skip-baseline  # fastest re-run
 #   ./run_full_benchmark.sh --only acorn --skip-load     # run only ACORN-1
-#   ./run_full_benchmark.sh --only acorn_gamma --skip-load  # run only ACORN-gamma
+#   ./run_full_benchmark.sh --only acorn_gamma --skip-load           # ACORN-gamma with default gamma=2
+#   ./run_full_benchmark.sh --only acorn_gamma --gamma 4 --skip-load # ACORN-gamma with gamma=4
+#   ./run_full_benchmark.sh --gamma-sweep --skip-load    # sweep gamma=2,4,8
 #   ./run_full_benchmark.sh --only grid  --skip-load     # run only Grid-HNSW
 #
 # When do you need to reload data?
@@ -38,6 +40,8 @@ WARMUP=5
 SKIP_LOAD=""
 SKIP_BASELINE=0
 ONLY_MODE=""
+GAMMA=2
+GAMMA_SWEEP=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,6 +55,8 @@ while [[ $# -gt 0 ]]; do
         --skip-load) SKIP_LOAD="--skip-load"; shift;;
         --skip-baseline) SKIP_BASELINE=1; shift;;
         --only)    ONLY_MODE="$2"; SKIP_BASELINE=1; shift 2;;
+        --gamma)   GAMMA="$2"; shift 2;;
+        --gamma-sweep) GAMMA_SWEEP=1; shift;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -65,6 +71,11 @@ echo "  Rows:    $ROWS"
 echo "  Dim:     $DIM"
 echo "  K:       $K"
 echo "  Queries: $QUERIES (+ $WARMUP warmup per spec)"
+if [ "$GAMMA_SWEEP" -eq 1 ]; then
+    echo "  Gamma:   SWEEP (2, 4, 8)"
+else
+    echo "  Gamma:   $GAMMA (for acorn_gamma mode)"
+fi
 echo "  Output:  $OUT"
 echo ""
 
@@ -194,11 +205,21 @@ if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "acorn" ]; then
 fi
 
 if ([ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "acorn_gamma" ]) && [ "${SKIP_ACORN_GAMMA:-0}" -eq 0 ]; then
-    echo "============================================================"
-    echo " [3/4] ACORN-gamma -- Dense-Graph Predicate-Aware Search"
-    echo "============================================================"
-    python3 "$BENCH" --mode acorn_gamma $COMMON_ARGS $CLONE_ARG
-    echo ""
+    if [ "$GAMMA_SWEEP" -eq 1 ]; then
+        for G in 2 4 8; do
+            echo "============================================================"
+            echo " [3/4] ACORN-gamma (gamma=$G) -- Dense-Graph Predicate-Aware Search"
+            echo "============================================================"
+            python3 "$BENCH" --mode acorn_gamma --gamma "$G" $COMMON_ARGS $CLONE_ARG
+            echo ""
+        done
+    else
+        echo "============================================================"
+        echo " [3/4] ACORN-gamma (gamma=$GAMMA) -- Dense-Graph Predicate-Aware Search"
+        echo "============================================================"
+        python3 "$BENCH" --mode acorn_gamma --gamma "$GAMMA" $COMMON_ARGS $CLONE_ARG
+        echo ""
+    fi
 fi
 
 if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then

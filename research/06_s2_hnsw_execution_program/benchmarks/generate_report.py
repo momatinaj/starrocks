@@ -34,7 +34,7 @@ except ImportError:
     print("  pip3 install matplotlib numpy")
     sys.exit(1)
 
-MODE_ORDER = ["b0", "acorn", "grid"]
+BASE_MODE_ORDER = ["b0", "acorn", "grid"]
 MODE_LABELS = {
     "b0": "B0: Brute Force",
     "acorn": "ACORN-1",
@@ -45,6 +45,7 @@ MODE_COLORS = {
     "acorn": "#198754",
     "grid": "#dc3545",
 }
+GAMMA_COLOR_PALETTE = ["#0d6efd", "#6610f2", "#d63384", "#fd7e14", "#20c997"]
 
 QUERY_LABELS = {
     "radius_1km": "Radius 1 km",
@@ -55,7 +56,37 @@ QUERY_LABELS = {
 }
 
 
-def load_latest_results(results_dir):
+def discover_modes(results_dir):
+    """Scan the results directory and return the full MODE_ORDER including any
+    acorn_gamma_N variants found, along with updated labels and colors."""
+    import re
+
+    gamma_modes = set()
+    if os.path.isdir(results_dir):
+        for fname in os.listdir(results_dir):
+            m = re.match(r"(acorn_gamma_\d+)_\d{8}_\d{6}\.json$", fname)
+            if m:
+                gamma_modes.add(m.group(1))
+
+    gamma_sorted = sorted(gamma_modes, key=lambda s: int(s.split("_")[-1]))
+
+    order = []
+    for base in BASE_MODE_ORDER:
+        order.append(base)
+        if base == "acorn":
+            order.extend(gamma_sorted)
+
+    labels = dict(MODE_LABELS)
+    colors = dict(MODE_COLORS)
+    for i, gm in enumerate(gamma_sorted):
+        gamma_val = gm.split("_")[-1]
+        labels[gm] = f"ACORN-\u03b3({gamma_val})"
+        colors[gm] = GAMMA_COLOR_PALETTE[i % len(GAMMA_COLOR_PALETTE)]
+
+    return order, labels, colors
+
+
+def load_latest_results(results_dir, mode_order):
     files_by_mode = defaultdict(list)
     if not os.path.isdir(results_dir):
         print(f"Results directory not found: {results_dir}")
@@ -64,7 +95,7 @@ def load_latest_results(results_dir):
     for fname in os.listdir(results_dir):
         if not fname.endswith(".json"):
             continue
-        for mode in MODE_ORDER:
+        for mode in mode_order:
             if fname.startswith(f"{mode}_"):
                 files_by_mode[mode].append(fname)
                 break
@@ -93,7 +124,10 @@ def fig_to_file(fig, path):
     plt.close(fig)
 
 
-def make_latency_chart(all_results, query_types, available_modes, percentile="p50"):
+def make_latency_chart(all_results, query_types, available_modes, percentile="p50",
+                       mode_labels=None, mode_colors=None):
+    mode_labels = mode_labels or MODE_LABELS
+    mode_colors = mode_colors or MODE_COLORS
     label_map = {"p50": "p50 (Median)", "p95": "p95", "p99": "p99"}
     fig, ax = plt.subplots(figsize=(12, 5))
 
@@ -112,8 +146,8 @@ def make_latency_chart(all_results, query_types, available_modes, percentile="p5
             x + offset,
             vals,
             width,
-            label=MODE_LABELS.get(mode, mode),
-            color=MODE_COLORS.get(mode, "#999"),
+            label=mode_labels.get(mode, mode),
+            color=mode_colors.get(mode, "#999"),
             edgecolor="white",
             linewidth=0.5,
         )
@@ -143,7 +177,10 @@ def make_latency_chart(all_results, query_types, available_modes, percentile="p5
     return fig
 
 
-def make_recall_chart(all_results, query_types, available_modes):
+def make_recall_chart(all_results, query_types, available_modes,
+                      mode_labels=None, mode_colors=None):
+    mode_labels = mode_labels or MODE_LABELS
+    mode_colors = mode_colors or MODE_COLORS
     fig, ax = plt.subplots(figsize=(12, 5))
 
     n_qt = len(query_types)
@@ -161,8 +198,8 @@ def make_recall_chart(all_results, query_types, available_modes):
             x + offset,
             vals,
             width,
-            label=MODE_LABELS.get(mode, mode),
-            color=MODE_COLORS.get(mode, "#999"),
+            label=mode_labels.get(mode, mode),
+            color=mode_colors.get(mode, "#999"),
             edgecolor="white",
             linewidth=0.5,
         )
@@ -189,7 +226,10 @@ def make_recall_chart(all_results, query_types, available_modes):
     return fig
 
 
-def make_speedup_chart(all_results, query_types, available_modes):
+def make_speedup_chart(all_results, query_types, available_modes,
+                       mode_labels=None, mode_colors=None):
+    mode_labels = mode_labels or MODE_LABELS
+    mode_colors = mode_colors or MODE_COLORS
     fig, ax = plt.subplots(figsize=(12, 5))
 
     n_qt = len(query_types)
@@ -211,8 +251,8 @@ def make_speedup_chart(all_results, query_types, available_modes):
             x + offset,
             vals,
             width,
-            label=MODE_LABELS.get(mode, mode),
-            color=MODE_COLORS.get(mode, "#999"),
+            label=mode_labels.get(mode, mode),
+            color=mode_colors.get(mode, "#999"),
             edgecolor="white",
             linewidth=0.5,
         )
@@ -243,7 +283,10 @@ def make_speedup_chart(all_results, query_types, available_modes):
     return fig
 
 
-def make_latency_distribution_chart(all_results, query_types, available_modes):
+def make_latency_distribution_chart(all_results, query_types, available_modes,
+                                    mode_labels=None, mode_colors=None):
+    mode_labels = mode_labels or MODE_LABELS
+    mode_colors = mode_colors or MODE_COLORS
     fig, axes = plt.subplots(1, len(query_types), figsize=(4 * len(query_types), 4), sharey=False)
     if len(query_types) == 1:
         axes = [axes]
@@ -257,8 +300,8 @@ def make_latency_distribution_chart(all_results, query_types, available_modes):
             lats = all_results[mode].get("results", {}).get(qt, {}).get("latencies_ms", [])
             if lats:
                 data_to_plot.append(lats)
-                labels.append(MODE_LABELS.get(mode, mode))
-                colors.append(MODE_COLORS.get(mode, "#999"))
+                labels.append(mode_labels.get(mode, mode))
+                colors.append(mode_colors.get(mode, "#999"))
         if data_to_plot:
             bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True, widths=0.6)
             for patch, color in zip(bp["boxes"], colors):
@@ -297,7 +340,8 @@ def build_data_table(all_results, query_types, available_modes):
     return rows
 
 
-def generate_analysis(data_table, available_modes):
+def generate_analysis(data_table, available_modes, mode_labels=None):
+    mode_labels = mode_labels or MODE_LABELS
     sections = []
 
     sections.append(
@@ -314,6 +358,9 @@ def generate_analysis(data_table, available_modes):
         "allowing it to leverage the HNSW graph structure while filtering. This produces "
         "sub-linear search time with high recall, though recall may drop below 1.0 "
         "for very selective predicates where the graph neighbourhood is sparse.</li>"
+        "<li><strong>ACORN-&gamma;</strong> builds a denser HNSW graph (M &times; &gamma; "
+        "neighbors) while searching with the base-M early-stop threshold. Higher &gamma; "
+        "provides more routing options through the graph at the cost of larger indexes.</li>"
         "<li><strong>Grid-HNSW</strong> partitions vectors by S2 cell at write time and "
         "builds a per-cell HNSW index. At query time, only cells overlapping the spatial "
         "predicate are searched, reducing the search space proportionally to the "
@@ -321,76 +368,49 @@ def generate_analysis(data_table, available_modes):
         "</ul>"
     )
 
-    has_acorn = "acorn" in available_modes
-    if has_acorn:
-        acorn_recalls = [
-            r["acorn"]["recall"] for r in data_table if r.get("acorn", {}).get("recall") is not None
+    def _mode_summary(mode, label):
+        recalls = [
+            r[mode]["recall"] for r in data_table
+            if r.get(mode, {}).get("recall") is not None
         ]
-        avg_recall = sum(acorn_recalls) / len(acorn_recalls) if acorn_recalls else 0
-        acorn_speedups = [r["acorn"]["speedup"] for r in data_table]
-        avg_speedup = sum(acorn_speedups) / len(acorn_speedups) if acorn_speedups else 0
-
-        fastest_qt = max(data_table, key=lambda r: r.get("acorn", {}).get("speedup", 0))
-        slowest_qt = min(data_table, key=lambda r: r.get("acorn", {}).get("speedup", 0))
+        avg_recall = sum(recalls) / len(recalls) if recalls else 0
+        speedups = [r[mode]["speedup"] for r in data_table if mode in r]
+        avg_speedup = sum(speedups) / len(speedups) if speedups else 0
 
         sections.append(
-            "<h2>ACORN-1 Performance Summary</h2>"
+            f"<h2>{label} Performance Summary</h2>"
             "<ul>"
             f"<li><strong>Average Recall@K:</strong> {avg_recall:.3f}</li>"
             f"<li><strong>Average Speedup vs Brute Force:</strong> {avg_speedup:.2f}x</li>"
-            f"<li><strong>Best speedup:</strong> {fastest_qt['label']} "
-            f"({fastest_qt['acorn']['speedup']:.2f}x)</li>"
-            f"<li><strong>Worst speedup:</strong> {slowest_qt['label']} "
-            f"({slowest_qt['acorn']['speedup']:.2f}x)</li>"
             "</ul>"
         )
 
-        if avg_recall < 0.90:
+        if avg_recall > 0 and avg_recall < 0.90:
             sections.append(
-                "<h3>Recall Analysis</h3>"
-                "<p>ACORN-1 recall is below 90%, which suggests the 2-hop expansion "
-                "is not sufficient for the selectivity levels in this workload. "
-                "Possible improvements:</p>"
-                "<ul>"
-                "<li>Increase <code>ef_search</code> to expand a larger candidate set</li>"
-                "<li>Use adaptive hop count based on estimated selectivity</li>"
-                "<li>Fall back to brute force when selectivity is below a threshold</li>"
-                "</ul>"
+                f"<p>{label} recall is below 90%. Consider increasing "
+                "<code>ef_search</code> or using a higher gamma for denser graph connectivity.</p>"
             )
-        elif avg_recall < 0.95:
+        elif avg_recall >= 0.95:
             sections.append(
-                "<h3>Recall Analysis</h3>"
-                "<p>ACORN-1 recall is moderate (90-95%). The graph traversal is "
-                "finding most of the ground-truth results but missing some, especially "
-                "for highly selective spatial predicates where qualifying neighbors are sparse.</p>"
-            )
-        else:
-            sections.append(
-                "<h3>Recall Analysis</h3>"
-                "<p>ACORN-1 achieves strong recall (>95%), indicating the 2-hop "
-                "neighbour expansion effectively navigates the HNSW graph even under "
-                "spatial constraints.</p>"
+                f"<p>{label} achieves strong recall (&gt;95%), indicating effective "
+                "graph navigation under spatial constraints.</p>"
             )
 
-    has_grid = "grid" in available_modes
-    if has_grid:
-        grid_recalls = [
-            r["grid"]["recall"] for r in data_table if r.get("grid", {}).get("recall") is not None
-        ]
-        avg_grid_recall = sum(grid_recalls) / len(grid_recalls) if grid_recalls else 0
-        grid_speedups = [r["grid"]["speedup"] for r in data_table]
-        avg_grid_speedup = sum(grid_speedups) / len(grid_speedups) if grid_speedups else 0
+    for mode in available_modes:
+        if mode == "b0":
+            continue
+        label = mode_labels.get(mode, mode)
+        if mode in [r_key for row in data_table for r_key in row if r_key not in ("query_type", "label")]:
+            _mode_summary(mode, label)
 
+    gamma_modes = [m for m in available_modes if m.startswith("acorn_gamma_")]
+    if len(gamma_modes) > 1:
         sections.append(
-            "<h2>Grid-HNSW Performance Summary</h2>"
-            "<ul>"
-            f"<li><strong>Average Recall@K:</strong> {avg_grid_recall:.3f}</li>"
-            f"<li><strong>Average Speedup vs Brute Force:</strong> {avg_grid_speedup:.2f}x</li>"
-            "</ul>"
-            "<p>Grid-HNSW partitions vectors by S2 cell at write time and builds a "
-            "per-cell HNSW index. At query time, only cells overlapping the spatial "
-            "predicate are searched, which reduces the search space proportionally to "
-            "the geographic selectivity.</p>"
+            "<h2>Gamma Comparison</h2>"
+            "<p>Multiple &gamma; values were tested. Compare recall and latency across "
+            "gamma variants above to identify the optimal &gamma; for your workload. "
+            "Higher &gamma; typically improves recall at the cost of index size and "
+            "build time.</p>"
         )
 
     sections.append(
@@ -402,25 +422,27 @@ def generate_analysis(data_table, available_modes):
         "<li><strong>radius_20km / polygon_metro</strong> are broad filters that qualify "
         "many rows, allowing the ANN graph to navigate more freely.</li>"
         "</ul>"
-        "<p>We expect ACORN-1 to perform best on moderate-to-broad selectivity and "
+        "<p>We expect ACORN methods to perform best on moderate-to-broad selectivity and "
         "potentially struggle on very tight spatial filters.</p>"
     )
 
     return "\n".join(sections)
 
 
-def generate_html_report(all_results, charts_b64, data_table, available_modes, output_path):
+def generate_html_report(all_results, charts_b64, data_table, available_modes, output_path,
+                         mode_labels=None, mode_colors=None):
+    mode_labels = mode_labels or MODE_LABELS
     ref = all_results[available_modes[0]]
     rows = ref.get("rows", "?")
     dim = ref.get("dim", "?")
     k = ref.get("k", "?")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    analysis = generate_analysis(data_table, available_modes)
+    analysis = generate_analysis(data_table, available_modes, mode_labels)
 
     table_html = "<table><thead><tr><th>Query Type</th>"
     for mode in available_modes:
-        label = MODE_LABELS.get(mode, mode)
+        label = mode_labels.get(mode, mode)
         table_html += f"<th colspan='4'>{label}</th>"
     table_html += "</tr><tr><th></th>"
     for _ in available_modes:
@@ -484,13 +506,13 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
 <body>
 <div class="container">
   <h1>Spatial-Vector Benchmark Report</h1>
-  <p class="subtitle">B0 (Brute Force) vs ACORN-1 vs Grid-HNSW &mdash; Generated {timestamp}</p>
+  <p class="subtitle">Spatial-Vector Benchmark Comparison &mdash; Generated {timestamp}</p>
 
   <div class="meta">
     <div class="meta-item"><strong>Rows:</strong> {rows:,}</div>
     <div class="meta-item"><strong>Dimensions:</strong> {dim}</div>
     <div class="meta-item"><strong>Top-K:</strong> {k}</div>
-    <div class="meta-item"><strong>Modes:</strong> {', '.join(MODE_LABELS.get(m, m) for m in available_modes)}</div>
+    <div class="meta-item"><strong>Modes:</strong> {', '.join(mode_labels.get(m, m) for m in available_modes)}</div>
   </div>
 
   <h2>Results Table</h2>
@@ -546,14 +568,18 @@ def main():
     if args.output is None:
         args.output = os.path.join(args.results_dir, "benchmark_report.html")
 
+    print(f"\nDiscovering modes from {args.results_dir} ...")
+    mode_order, mode_labels, mode_colors = discover_modes(args.results_dir)
+    print(f"  Mode order: {mode_order}")
+
     print(f"\nLoading results from {args.results_dir} ...")
-    all_results = load_latest_results(args.results_dir)
+    all_results = load_latest_results(args.results_dir, mode_order)
 
     if not all_results:
         print("No result files found. Run benchmarks first.")
         sys.exit(1)
 
-    available_modes = [m for m in MODE_ORDER if m in all_results]
+    available_modes = [m for m in mode_order if m in all_results]
     ref = all_results[available_modes[0]]
     query_types = list(ref.get("results", {}).keys())
 
@@ -563,22 +589,22 @@ def main():
     print("\nGenerating charts...")
     charts_b64 = {}
 
-    fig = make_latency_chart(all_results, query_types, available_modes, "p50")
+    fig = make_latency_chart(all_results, query_types, available_modes, "p50", mode_labels, mode_colors)
     charts_b64["p50"] = fig_to_base64(fig)
 
-    fig = make_latency_chart(all_results, query_types, available_modes, "p95")
+    fig = make_latency_chart(all_results, query_types, available_modes, "p95", mode_labels, mode_colors)
     charts_b64["p95"] = fig_to_base64(fig)
 
-    fig = make_latency_chart(all_results, query_types, available_modes, "p99")
+    fig = make_latency_chart(all_results, query_types, available_modes, "p99", mode_labels, mode_colors)
     charts_b64["p99"] = fig_to_base64(fig)
 
-    fig = make_recall_chart(all_results, query_types, available_modes)
+    fig = make_recall_chart(all_results, query_types, available_modes, mode_labels, mode_colors)
     charts_b64["recall"] = fig_to_base64(fig)
 
-    fig = make_speedup_chart(all_results, query_types, available_modes)
+    fig = make_speedup_chart(all_results, query_types, available_modes, mode_labels, mode_colors)
     charts_b64["speedup"] = fig_to_base64(fig)
 
-    fig = make_latency_distribution_chart(all_results, query_types, available_modes)
+    fig = make_latency_distribution_chart(all_results, query_types, available_modes, mode_labels, mode_colors)
     charts_b64["boxplot"] = fig_to_base64(fig)
 
     if args.save_charts:
@@ -590,7 +616,8 @@ def main():
     data_table = build_data_table(all_results, query_types, available_modes)
 
     print("Generating HTML report...")
-    generate_html_report(all_results, charts_b64, data_table, available_modes, args.output)
+    generate_html_report(all_results, charts_b64, data_table, available_modes, args.output,
+                         mode_labels, mode_colors)
 
     print(f"\nDone! Open the report in a browser:")
     print(f"  open {args.output}")
