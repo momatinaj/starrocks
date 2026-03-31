@@ -141,6 +141,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
                 }
                 if (isGridHnsw) {
                     opts.setUseGridHnsw(true);
+                    applyGridImprovementParams(info.index.getProperties(), opts);
                     extractAcornSpatialParams(predicate, scanOp, opts);
                     opts.setEnableUseANN(true);
                     opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -171,6 +172,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         }
         if (isGridHnsw) {
             opts.setUseGridHnsw(true);
+            applyGridImprovementParams(info.index.getProperties(), opts);
         }
         opts.setUseIVFPQ(VectorIndexParams.VectorIndexType.IVFPQ.name().equalsIgnoreCase(indexType));
         opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -346,6 +348,37 @@ public class RewriteToVectorPlanRule extends TransformationRule {
     /**
      * Extract spatial predicate parameters for ACORN-1 predicate-aware search.
      *
+     * Read Grid-HNSW improvement flags from index properties and apply them
+     * to VectorSearchOptions (G1: oversample, G2: neighbor expansion, G4: max cover cells).
+     */
+    private void applyGridImprovementParams(Map<String, String> props, VectorSearchOptions opts) {
+        String oversample = props.getOrDefault("grid_oversample",
+                props.getOrDefault("GRID_OVERSAMPLE", null));
+        if (oversample != null) {
+            try {
+                opts.setGridOversample(Float.parseFloat(oversample));
+            } catch (NumberFormatException ignored) {}
+        }
+        String expandNeighbors = props.getOrDefault("grid_expand_neighbors",
+                props.getOrDefault("GRID_EXPAND_NEIGHBORS", null));
+        if ("true".equalsIgnoreCase(expandNeighbors)) {
+            opts.setGridExpandNeighbors(true);
+        }
+        String scanSmallCells = props.getOrDefault("grid_scan_small_cells",
+                props.getOrDefault("GRID_SCAN_SMALL_CELLS", null));
+        if ("true".equalsIgnoreCase(scanSmallCells)) {
+            opts.setGridScanSmallCells(true);
+        }
+        String maxCoverCells = props.getOrDefault("grid_max_cover_cells",
+                props.getOrDefault("GRID_MAX_COVER_CELLS", null));
+        if (maxCoverCells != null) {
+            try {
+                opts.setGridMaxCoverCells(Integer.parseInt(maxCoverCells));
+            } catch (NumberFormatException ignored) {}
+        }
+    }
+
+    /**
      * Supported patterns:
      *   st_distance_sphere(lng_col, lat_col, const_lng, const_lat) <= const_radius
      *   st_distance_sphere(st_point(lng_col, lat_col), st_point(const_lng, const_lat)) <= const_radius

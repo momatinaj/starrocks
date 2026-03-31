@@ -26,28 +26,41 @@ MODE_LABELS = {
 
 def discover_modes(results_dir):
     """Scan the results directory and return full mode order + labels with any
-    acorn_gamma_N variants discovered dynamically."""
+    acorn_gamma_N and grid_gN variants discovered dynamically."""
     import re
 
     gamma_modes = set()
+    grid_variants = set()
     if os.path.isdir(results_dir):
         for fname in os.listdir(results_dir):
             m = re.match(r"(acorn_gamma_\d+)_\d{8}_\d{6}\.json$", fname)
             if m:
                 gamma_modes.add(m.group(1))
+            gm = re.match(r"(grid_g[\d_]+?)_\d{8}_\d{6}\.json$", fname)
+            if gm:
+                grid_variants.add(gm.group(1))
 
     gamma_sorted = sorted(gamma_modes, key=lambda s: int(s.split("_")[-1]))
+    grid_sorted = sorted(grid_variants)
 
     order = []
     for base in BASE_MODE_ORDER:
         order.append(base)
         if base == "acorn":
             order.extend(gamma_sorted)
+        if base == "grid":
+            order.extend(grid_sorted)
 
     labels = dict(MODE_LABELS)
     for gm in gamma_sorted:
         gamma_val = gm.split("_")[-1]
         labels[gm] = f"ACORN-\u03b3({gamma_val})"
+
+    grid_tag_labels = {"g1": "Oversample", "g2": "Neighbors", "g3": "SmallCells", "g4": "MaxCells"}
+    for gv in grid_sorted:
+        tags = gv.replace("grid_", "").split("_")
+        tag_desc = "+".join(grid_tag_labels.get(t, t) for t in tags)
+        labels[gv] = f"Grid+{tag_desc}"
 
     return order, labels
 

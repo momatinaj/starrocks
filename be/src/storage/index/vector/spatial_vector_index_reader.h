@@ -57,6 +57,27 @@ public:
 
     size_t active_reader_count() const;
 
+    // G1: Per-partition oversampling. Each partition searches for k * factor
+    // instead of k, then the global merge picks the true top-k.
+    void set_oversample_factor(float factor) { _oversample_factor = std::max(1.0f, factor); }
+    float oversample_factor() const { return _oversample_factor; }
+
+    // G2: Neighbor cell expansion. When enabled, query_cell_ids are expanded
+    // to include S2 edge-neighbor cells before partition matching.
+    void set_expand_neighbors(bool expand) { _expand_neighbors = expand; }
+    bool expand_neighbors() const { return _expand_neighbors; }
+
+    // G3: Small-cell brute-force. When enabled, matched partitions without
+    // HNSW contribute their row IDs as unranked candidates instead of being
+    // skipped entirely.
+    void set_scan_small_cells(bool scan) { _scan_small_cells = scan; }
+    bool scan_small_cells() const { return _scan_small_cells; }
+
+    // G4: Max cover cells for S2 covering. Higher values improve precision
+    // for large spatial predicates.
+    void set_max_cover_cells(int max_cells) { _max_cover_cells = std::max(1, max_cells); }
+    int max_cover_cells() const { return _max_cover_cells; }
+
 #ifdef WITH_TENANN
     // Search partitions matching query_cell_ids. Returns segment-local row IDs
     // and distances, merged across partitions into global top-k.
@@ -88,6 +109,11 @@ private:
     int64_t _index_id = 0;
     std::shared_ptr<TabletIndex> _tablet_index;
     std::map<std::string, std::string> _query_params;
+
+    float _oversample_factor = 1.0f;
+    bool _expand_neighbors = false;
+    bool _scan_small_cells = false;
+    int _max_cover_cells = 8;
 };
 
 } // namespace starrocks

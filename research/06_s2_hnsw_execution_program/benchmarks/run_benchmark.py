@@ -204,25 +204,24 @@ GRID_HNSW_INDEX_CLAUSE = """,
         "efconstruction" = "40",
         "s2_level" = "12",
         "lat_column" = "lat",
-        "lng_column" = "lng"
+        "lng_column" = "lng"{grid_extras}
     )"""
 
 VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE
 
 
-def create_table(conn, mode, dim, gamma=2):
+def create_table(conn, mode, dim, gamma=2, grid_extras=""):
     tbl = table_name(mode)
     execute(conn, f"DROP TABLE IF EXISTS {tbl}")
 
-    base_mode = mode.split("_")[0] if not mode.startswith("acorn") else mode
     if mode == "b0":
         idx = ""
     elif mode == "acorn":
         idx = ACORN_INDEX_CLAUSE.format(dim=dim)
     elif mode.startswith("acorn_gamma"):
         idx = ACORN_GAMMA_INDEX_CLAUSE.format(dim=dim, gamma=gamma)
-    elif mode == "grid":
-        idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim)
+    elif mode.startswith("grid"):
+        idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim, grid_extras=grid_extras)
     else:
         idx = HNSW_INDEX_CLAUSE.format(dim=dim)
 
@@ -423,6 +422,13 @@ MODE_DESCRIPTIONS = {
     "acorn": "ACORN-1 Predicate-Aware HNSW",
     "acorn_gamma": "ACORN-gamma Dense-Graph HNSW (gamma=2)",
     "grid": "Grid-HNSW (Spatially Partitioned HNSW)",
+    "grid_g1": "Grid-HNSW + G1 (Oversample)",
+    "grid_g2": "Grid-HNSW + G2 (Neighbor Expansion)",
+    "grid_g3": "Grid-HNSW + G3 (Small-Cell Scan)",
+    "grid_g4": "Grid-HNSW + G4 (Max Cover Cells)",
+    "grid_g1_g2": "Grid-HNSW + G1+G2 (Oversample + Neighbors)",
+    "grid_g1_g2_g3": "Grid-HNSW + G1+G2+G3 (All except G4)",
+    "grid_g1_g2_g3_g4": "Grid-HNSW + All Improvements",
 }
 
 
@@ -502,20 +508,58 @@ def main():
         default=2,
         help="Gamma value for acorn_gamma mode (default: 2). Ignored for other modes.",
     )
+    parser.add_argument(
+        "--grid-oversample",
+        type=float,
+        default=1.0,
+        help="Grid-HNSW G1: per-partition oversample factor (default: 1.0 = off). Ignored for non-grid modes.",
+    )
+    parser.add_argument(
+        "--grid-expand-neighbors",
+        action="store_true",
+        help="Grid-HNSW G2: expand S2 covering with edge-neighbor cells.",
+    )
+    parser.add_argument(
+        "--grid-scan-small",
+        action="store_true",
+        help="Grid-HNSW G3: include rows from small cells (no HNSW) as candidates.",
+    )
+    parser.add_argument(
+        "--grid-max-cells",
+        type=int,
+        default=8,
+        help="Grid-HNSW G4: max S2 cover cells (default: 8).",
+    )
     args = parser.parse_args()
 
     resolved_mode = args.mode
     if args.mode == "acorn_gamma":
         resolved_mode = f"acorn_gamma_{args.gamma}"
+    elif args.mode == "grid":
+        # Build a suffix from active grid improvements for ablation tracking
+        grid_tags = []
+        if args.grid_oversample > 1.0:
+            grid_tags.append("g1")
+        if args.grid_expand_neighbors:
+            grid_tags.append("g2")
+        if args.grid_scan_small:
+            grid_tags.append("g3")
+        if args.grid_max_cells != 8:
+            grid_tags.append("g4")
+        if grid_tags:
+            resolved_mode = f"grid_{'_'.join(grid_tags)}"
 
     os.makedirs(args.output, exist_ok=True)
 
     gamma_str = f"  |  Gamma: {args.gamma}" if args.mode == "acorn_gamma" else ""
+    grid_str = ""
+    if args.mode == "grid" and resolved_mode != "grid":
+        grid_str = f"  |  Grid improvements: {', '.join(resolved_mode.split('_')[1:])}"
     print(f"\n{'='*60}")
     print(f"Spatial-Vector Benchmark  --  Mode: {resolved_mode.upper()}")
     print(f"{'='*60}")
     print(f"  Host: {args.host}:{args.port}")
-    print(f"  Rows: {args.rows}  |  Dim: {args.dim}  |  K: {args.k}{gamma_str}")
+    print(f"  Rows: {args.rows}  |  Dim: {args.dim}  |  K: {args.k}{gamma_str}{grid_str}")
     print(f"  Queries per spec: {args.queries}  |  Warmup: {args.warmup}")
     print()
 
@@ -531,6 +575,19 @@ def main():
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'
         )
 
+    # Build grid DDL extras from improvement flags
+    grid_extras_parts = []
+    if args.mode == "grid":
+        if args.grid_oversample > 1.0:
+            grid_extras_parts.append(f',\n        "grid_oversample" = "{args.grid_oversample}"')
+        if args.grid_expand_neighbors:
+            grid_extras_parts.append(',\n        "grid_expand_neighbors" = "true"')
+        if args.grid_scan_small:
+            grid_extras_parts.append(',\n        "grid_scan_small_cells" = "true"')
+        if args.grid_max_cells != 8:
+            grid_extras_parts.append(f',\n        "grid_max_cover_cells" = "{args.grid_max_cells}"')
+    grid_extras = "".join(grid_extras_parts)
+
     need_load = not args.skip_load
     if args.skip_load:
         tbl = table_name(resolved_mode)
@@ -545,7 +602,7 @@ def main():
         src = table_name(args.clone_from)
         tbl = table_name(resolved_mode)
         print(f"[2/4] Creating table {tbl} ...")
-        create_table(conn, resolved_mode, args.dim, gamma=args.gamma)
+        create_table(conn, resolved_mode, args.dim, gamma=args.gamma, grid_extras=grid_extras)
         print(f"[3/4] Cloning data: INSERT INTO {tbl} SELECT * FROM {src} ...")
         t0 = time.time()
         execute(conn, f"INSERT INTO {tbl} SELECT * FROM {src}")
@@ -558,7 +615,7 @@ def main():
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
         print("[2/4] Creating table...")
-        create_table(conn, resolved_mode, args.dim, gamma=args.gamma)
+        create_table(conn, resolved_mode, args.dim, gamma=args.gamma, grid_extras=grid_extras)
 
         print("[3/4] Loading data...")
         load_data(conn, resolved_mode, lats, lngs, vecs)
@@ -611,6 +668,10 @@ def main():
         "num_queries": args.queries,
         "seed": args.seed,
         "gamma": args.gamma if args.mode == "acorn_gamma" else None,
+        "grid_oversample": args.grid_oversample if args.mode == "grid" and args.grid_oversample > 1.0 else None,
+        "grid_expand_neighbors": args.grid_expand_neighbors if args.mode == "grid" else None,
+        "grid_scan_small_cells": args.grid_scan_small if args.mode == "grid" else None,
+        "grid_max_cover_cells": args.grid_max_cells if args.mode == "grid" and args.grid_max_cells != 8 else None,
         "timestamp": timestamp,
         "results": {},
         "recalls": recalls,

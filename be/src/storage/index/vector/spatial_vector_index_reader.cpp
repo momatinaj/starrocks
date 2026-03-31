@@ -15,6 +15,7 @@
 #include "storage/index/vector/spatial_vector_index_reader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <queue>
 
 #include "fs/fs_util.h"
@@ -115,6 +116,8 @@ Status SpatialVectorIndexReader::search(const std::vector<uint64_t>& query_cell_
     std::vector<PartitionResult> partition_results;
     partition_results.reserve(matching.size());
 
+    int64_t local_k = static_cast<int64_t>(std::ceil(k * _oversample_factor));
+
     for (const auto* part_info : matching) {
         size_t idx = std::string::npos;
         for (size_t i = 0; i < _partitions.size(); i++) {
@@ -127,12 +130,25 @@ Status SpatialVectorIndexReader::search(const std::vector<uint64_t>& query_cell_
         if (idx == std::string::npos) continue;
 
         auto& state = _partitions[idx];
-        if (!state.reader) continue;
+        if (!state.reader) {
+            if (_scan_small_cells && !state.segment_row_ids.empty()) {
+                PartitionResult pr;
+                pr.row_id_map = &state.segment_row_ids;
+                for (size_t ri = 0; ri < state.segment_row_ids.size(); ri++) {
+                    pr.local_ids.push_back(static_cast<int64_t>(ri));
+                    pr.distances.push_back(std::numeric_limits<float>::max());
+                }
+                partition_results.push_back(std::move(pr));
+                LOG(INFO) << "Grid-HNSW G3: included " << state.segment_row_ids.size()
+                          << " rows from small cell " << part_info->cell_id;
+            }
+            continue;
+        }
 
-        std::vector<int64_t> local_ids(k, -1);
-        std::vector<float> local_distances(k, std::numeric_limits<float>::max());
+        std::vector<int64_t> local_ids(local_k, -1);
+        std::vector<float> local_distances(local_k, std::numeric_limits<float>::max());
 
-        auto st = state.reader->search(query_view, static_cast<int>(k), local_ids.data(),
+        auto st = state.reader->search(query_view, static_cast<int>(local_k), local_ids.data(),
                                        reinterpret_cast<uint8_t*>(local_distances.data()), nullptr);
         if (!st.ok()) {
             LOG(WARNING) << "Spatial partition search failed for cell " << part_info->cell_id << ": " << st.message();

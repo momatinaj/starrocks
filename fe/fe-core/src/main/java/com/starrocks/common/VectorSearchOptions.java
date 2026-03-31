@@ -51,6 +51,10 @@ public class VectorSearchOptions {
     private boolean useAcornGamma = false;
     private int acornGamma = 2;
     private boolean useGridHnsw = false;
+    private float gridOversample = 1.0f;
+    private boolean gridExpandNeighbors = false;
+    private boolean gridScanSmallCells = false;
+    private int gridMaxCoverCells = 8;
     private FallbackMode fallbackMode = FallbackMode.NONE;
 
     private String distanceColumnName = "";
@@ -154,6 +158,18 @@ public class VectorSearchOptions {
         this.useGridHnsw = useGridHnsw;
     }
 
+    public float getGridOversample() { return gridOversample; }
+    public void setGridOversample(float gridOversample) { this.gridOversample = gridOversample; }
+
+    public boolean isGridExpandNeighbors() { return gridExpandNeighbors; }
+    public void setGridExpandNeighbors(boolean gridExpandNeighbors) { this.gridExpandNeighbors = gridExpandNeighbors; }
+
+    public boolean isGridScanSmallCells() { return gridScanSmallCells; }
+    public void setGridScanSmallCells(boolean gridScanSmallCells) { this.gridScanSmallCells = gridScanSmallCells; }
+
+    public int getGridMaxCoverCells() { return gridMaxCoverCells; }
+    public void setGridMaxCoverCells(int gridMaxCoverCells) { this.gridMaxCoverCells = gridMaxCoverCells; }
+
     public void setAcornRadiusPredicate(double centerLat, double centerLng, double radiusMeters,
                                         String latColumn, String lngColumn) {
         this.acornPredicateType = AcornPredicateType.RADIUS;
@@ -223,6 +239,18 @@ public class VectorSearchOptions {
         }
         if (useGridHnsw) {
             queryParams.put("index_type", "grid_hnsw");
+            if (gridOversample > 1.0f) {
+                queryParams.put("grid_oversample", String.valueOf(gridOversample));
+            }
+            if (gridExpandNeighbors) {
+                queryParams.put("grid_expand_neighbors", "true");
+            }
+            if (gridScanSmallCells) {
+                queryParams.put("grid_scan_small_cells", "true");
+            }
+            if (gridMaxCoverCells != 8) {
+                queryParams.put("grid_max_cover_cells", String.valueOf(gridMaxCoverCells));
+            }
             if (acornPredicateType != AcornPredicateType.NONE) {
                 queryParams.put("grid_predicate_type", acornPredicateType.name());
                 queryParams.put("grid_lat_column", acornLatColumn);

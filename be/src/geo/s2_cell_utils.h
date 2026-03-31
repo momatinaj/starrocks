@@ -63,6 +63,11 @@ std::vector<uint64_t> s2_covering_cell_ids(const S2Region& region, int level, in
 // directly (e.g. segment_iterator.cpp).
 std::vector<uint64_t> s2_covering_cell_ids_for_polygon_wkt(const std::string& wkt, int level, int max_cells = 8);
 
+// G2: Expand a set of cell IDs by adding the 4 edge-neighbor cells of each
+// input cell. Returns the deduplicated union of original + neighbor cells.
+// Used at query time to catch vectors near cell boundaries.
+std::vector<uint64_t> s2_expand_with_neighbors(const std::vector<uint64_t>& cell_ids);
+
 // Validate that an S2 level is within [0, 30].
 inline bool s2_is_valid_level(int level) {
     return level >= kS2MinLevel && level <= kS2MaxLevel;

@@ -42,6 +42,9 @@ SKIP_BASELINE=0
 ONLY_MODE=""
 GAMMA=2
 GAMMA_SWEEP=0
+GRID_ABLATION=0
+GRID_OVERSAMPLE="3"
+GRID_MAX_CELLS="32"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -57,6 +60,9 @@ while [[ $# -gt 0 ]]; do
         --only)    ONLY_MODE="$2"; SKIP_BASELINE=1; shift 2;;
         --gamma)   GAMMA="$2"; shift 2;;
         --gamma-sweep) GAMMA_SWEEP=1; shift;;
+        --grid-ablation) GRID_ABLATION=1; shift;;
+        --grid-oversample) GRID_OVERSAMPLE="$2"; shift 2;;
+        --grid-max-cells)  GRID_MAX_CELLS="$2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -75,6 +81,10 @@ if [ "$GAMMA_SWEEP" -eq 1 ]; then
     echo "  Gamma:   SWEEP (2, 4, 8)"
 else
     echo "  Gamma:   $GAMMA (for acorn_gamma mode)"
+fi
+if [ "$GRID_ABLATION" -eq 1 ]; then
+    echo "  Grid:    ABLATION (G1/G2/G3/G4 individually + combos)"
+    echo "           oversample=$GRID_OVERSAMPLE, max_cells=$GRID_MAX_CELLS"
 fi
 echo "  Output:  $OUT"
 echo ""
@@ -224,10 +234,54 @@ fi
 
 if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then
     echo "============================================================"
-    echo " [4/4] GRID -- Grid-HNSW Spatially Partitioned Search"
+    echo " [4/N] GRID -- Grid-HNSW Spatially Partitioned Search (baseline)"
     echo "============================================================"
     python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
     echo ""
+
+    if [ "$GRID_ABLATION" -eq 1 ]; then
+        echo "============================================================"
+        echo " Grid Ablation: G1 -- Oversample (factor=${GRID_OVERSAMPLE})"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G2 -- Neighbor Expansion"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-expand-neighbors $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G3 -- Small-Cell Scan"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-scan-small $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G4 -- Max Cover Cells (${GRID_MAX_CELLS})"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-max-cells "$GRID_MAX_CELLS" $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G1+G2 -- Oversample + Neighbors"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G1+G2+G3 -- All except max_cells"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small $COMMON_ARGS $CLONE_ARG
+        echo ""
+
+        echo "============================================================"
+        echo " Grid Ablation: G1+G2+G3+G4 -- All Improvements"
+        echo "============================================================"
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small --grid-max-cells "$GRID_MAX_CELLS" $COMMON_ARGS $CLONE_ARG
+        echo ""
+    fi
 fi
 
 echo "============================================================"

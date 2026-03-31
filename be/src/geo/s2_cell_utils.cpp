@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 #include "geo/geo_types.h"
 
@@ -108,6 +109,25 @@ std::vector<uint64_t> s2_covering_cell_ids_for_polygon_wkt(const std::string& wk
     }
 
     return s2_covering_cell_ids(*s2_poly, level, max_cells);
+}
+
+std::vector<uint64_t> s2_expand_with_neighbors(const std::vector<uint64_t>& cell_ids) {
+    std::set<uint64_t> expanded(cell_ids.begin(), cell_ids.end());
+
+    for (uint64_t id : cell_ids) {
+        S2CellId cell(id);
+        if (!cell.is_valid() || cell.is_face()) continue;
+
+        S2CellId neighbors[4];
+        cell.GetEdgeNeighbors(neighbors);
+        for (const auto& n : neighbors) {
+            if (n.is_valid()) {
+                expanded.insert(n.id());
+            }
+        }
+    }
+
+    return {expanded.begin(), expanded.end()};
 }
 
 } // namespace starrocks

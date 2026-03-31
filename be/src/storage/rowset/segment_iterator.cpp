@@ -839,6 +839,38 @@ Status SegmentIterator::_init_ann_reader() {
             if (_vector_index_ctx->spatial_reader->is_valid()) {
                 int s2_level = _vector_index_ctx->spatial_reader->manifest().s2_level();
                 auto& qp = _vector_index_ctx->query_params;
+
+                // G1: per-partition oversampling
+                auto os_it = qp.find("grid_oversample");
+                if (os_it != qp.end()) {
+                    float factor = std::stof(os_it->second);
+                    _vector_index_ctx->spatial_reader->set_oversample_factor(factor);
+                    LOG(INFO) << "Grid-HNSW: oversample_factor=" << factor;
+                }
+
+                // G3: small-cell brute-force fallback
+                auto sc_it = qp.find("grid_scan_small_cells");
+                if (sc_it != qp.end() && sc_it->second == "true") {
+                    _vector_index_ctx->spatial_reader->set_scan_small_cells(true);
+                    LOG(INFO) << "Grid-HNSW: scan_small_cells=true";
+                }
+
+                // G2: neighbor cell expansion
+                auto ne_it = qp.find("grid_expand_neighbors");
+                if (ne_it != qp.end() && ne_it->second == "true") {
+                    _vector_index_ctx->spatial_reader->set_expand_neighbors(true);
+                    LOG(INFO) << "Grid-HNSW: expand_neighbors=true";
+                }
+
+                // G4: configurable max cover cells
+                int max_cover = 8;
+                auto mc_it = qp.find("grid_max_cover_cells");
+                if (mc_it != qp.end()) {
+                    max_cover = std::stoi(mc_it->second);
+                    _vector_index_ctx->spatial_reader->set_max_cover_cells(max_cover);
+                    LOG(INFO) << "Grid-HNSW: max_cover_cells=" << max_cover;
+                }
+
                 auto pt_it = qp.find("grid_predicate_type");
                 if (pt_it != qp.end()) {
                     std::string pred_type = pt_it->second;
@@ -849,15 +881,24 @@ Status SegmentIterator::_init_ann_reader() {
                             double lng = std::stod(qp.at("grid_predicate_center_lng"));
                             double radius_m = std::stod(qp.at("grid_predicate_radius_m"));
                             _vector_index_ctx->query_cell_ids =
-                                    s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level);
+                                    s2_covering_cell_ids_for_cap(lat, lng, radius_m, s2_level, max_cover);
                         } catch (const std::exception& e) {
                             LOG(WARNING) << "Grid-HNSW failed to parse radius predicate: " << e.what();
                         }
                     } else if (pred_type == "polygon") {
                         _vector_index_ctx->query_cell_ids =
-                                s2_covering_cell_ids_for_polygon_wkt(qp.at("grid_predicate_wkt"), s2_level);
+                                s2_covering_cell_ids_for_polygon_wkt(qp.at("grid_predicate_wkt"), s2_level, max_cover);
                     }
                 }
+
+                // G2: expand covering with S2 neighbor cells
+                if (_vector_index_ctx->spatial_reader->expand_neighbors() &&
+                    !_vector_index_ctx->query_cell_ids.empty()) {
+                    _vector_index_ctx->query_cell_ids =
+                            s2_expand_with_neighbors(_vector_index_ctx->query_cell_ids);
+                    LOG(INFO) << "Grid-HNSW: expanded to " << _vector_index_ctx->query_cell_ids.size() << " cells";
+                }
+
                 if (_vector_index_ctx->query_cell_ids.empty()) {
                     const auto& partitions = _vector_index_ctx->spatial_reader->manifest().partitions();
                     for (const auto& p : partitions) {
