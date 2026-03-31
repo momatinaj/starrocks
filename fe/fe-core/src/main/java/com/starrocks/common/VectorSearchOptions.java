@@ -158,17 +158,37 @@ public class VectorSearchOptions {
         this.useGridHnsw = useGridHnsw;
     }
 
-    public float getGridOversample() { return gridOversample; }
-    public void setGridOversample(float gridOversample) { this.gridOversample = gridOversample; }
+    public float getGridOversample() {
+        return gridOversample;
+    }
 
-    public boolean isGridExpandNeighbors() { return gridExpandNeighbors; }
-    public void setGridExpandNeighbors(boolean gridExpandNeighbors) { this.gridExpandNeighbors = gridExpandNeighbors; }
+    public void setGridOversample(float gridOversample) {
+        this.gridOversample = gridOversample;
+    }
 
-    public boolean isGridScanSmallCells() { return gridScanSmallCells; }
-    public void setGridScanSmallCells(boolean gridScanSmallCells) { this.gridScanSmallCells = gridScanSmallCells; }
+    public boolean isGridExpandNeighbors() {
+        return gridExpandNeighbors;
+    }
 
-    public int getGridMaxCoverCells() { return gridMaxCoverCells; }
-    public void setGridMaxCoverCells(int gridMaxCoverCells) { this.gridMaxCoverCells = gridMaxCoverCells; }
+    public void setGridExpandNeighbors(boolean gridExpandNeighbors) {
+        this.gridExpandNeighbors = gridExpandNeighbors;
+    }
+
+    public boolean isGridScanSmallCells() {
+        return gridScanSmallCells;
+    }
+
+    public void setGridScanSmallCells(boolean gridScanSmallCells) {
+        this.gridScanSmallCells = gridScanSmallCells;
+    }
+
+    public int getGridMaxCoverCells() {
+        return gridMaxCoverCells;
+    }
+
+    public void setGridMaxCoverCells(int gridMaxCoverCells) {
+        this.gridMaxCoverCells = gridMaxCoverCells;
+    }
 
     public void setAcornRadiusPredicate(double centerLat, double centerLng, double radiusMeters,
                                         String latColumn, String lngColumn) {

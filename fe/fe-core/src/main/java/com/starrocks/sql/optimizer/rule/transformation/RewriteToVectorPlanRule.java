@@ -357,7 +357,8 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         if (oversample != null) {
             try {
                 opts.setGridOversample(Float.parseFloat(oversample));
-            } catch (NumberFormatException ignored) {}
+            } catch (NumberFormatException ignored) {
+            }
         }
         String expandNeighbors = props.getOrDefault("grid_expand_neighbors",
                 props.getOrDefault("GRID_EXPAND_NEIGHBORS", null));
@@ -374,7 +375,8 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         if (maxCoverCells != null) {
             try {
                 opts.setGridMaxCoverCells(Integer.parseInt(maxCoverCells));
-            } catch (NumberFormatException ignored) {}
+            } catch (NumberFormatException ignored) {
+            }
         }
     }
 
