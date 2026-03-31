@@ -16,12 +16,15 @@ This pattern appears in applications like visual geo-search ("find all red signs
 
 ## Current Status
 
-Two production-ready spatial-vector index types have been implemented on the `feature/spatial-vector-fallback` branch:
+Three spatial-vector index types have been implemented:
 
-| Index Type | Description | Speedup vs Brute Force | Recall |
-|------------|-------------|----------------------|--------|
-| **ACORN-1** | Predicate-aware HNSW traversal with 2-hop expansion | 12-24x | 0.74-0.99 |
-| **Grid-HNSW** | S2-partitioned per-cell HNSW indexes | 29-37x | 0.65-0.99 |
+| Index Type | Branch | Description | Status |
+|------------|--------|-------------|--------|
+| **ACORN-1** | `feature/spatial-vector-fallback` | Predicate-aware HNSW traversal with 2-hop expansion | Shipped |
+| **Grid-HNSW** | `feature/spatial-vector-fallback` | S2-partitioned per-cell HNSW indexes | Shipped |
+| **ACORN-gamma** | `feature/acorn-gamma` | Dense-graph HNSW (gamma*M neighbors) + ACORN search | In development |
+
+ACORN-gamma builds a denser graph at construction time (M_effective = M * gamma, default gamma=2) while reusing the same ACORN predicate-aware 2-hop search. The denser graph improves recall under selective spatial predicates.
 
 See [06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md](06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md) for deployment, usage, and benchmarking instructions.
 

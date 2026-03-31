@@ -1,6 +1,6 @@
 # Spatial-Vector Search in StarRocks — Production Guide
 
-Complete guide for deploying and using spatial-vector hybrid search with ACORN-1 and Grid-HNSW indexes in a custom StarRocks build.
+Complete guide for deploying and using spatial-vector hybrid search with ACORN-1, ACORN-gamma, and Grid-HNSW indexes in a custom StarRocks build.
 
 ---
 
@@ -21,16 +21,14 @@ Complete guide for deploying and using spatial-vector hybrid search with ACORN-1
 
 ## 1. Overview 
 
-This custom StarRocks build adds two new vector index types that combine **spatial filtering** with **approximate nearest neighbor (ANN)** search:
+This custom StarRocks build adds three new vector index types that combine **spatial filtering** with **approximate nearest neighbor (ANN)** search:
 
 
-| Index Type    | How It Works                                                                                                                                                 | Best For                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| **ACORN-1**   | Predicate-aware HNSW graph traversal. During search, only spatially-qualifying nodes are visited, using 2-hop expansion to bridge over non-qualifying nodes. | Queries with moderate-to-broad spatial predicates (5km+ radius, metro polygons). No index rebuild needed when predicates change. |
-| **Grid-HNSW** | Spatially partitions data using S2 cells, builds per-partition HNSW indexes, searches only relevant partitions.                                              | Queries with consistent spatial patterns. Faster than ACORN but requires lat/lng columns at index creation.                      |
-
-
-Both methods are dramatically faster than brute force (20-37x speedup) while maintaining high recall (0.83-0.99).
+| Index Type        | How It Works                                                                                                                                                     | Best For                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **ACORN-1**       | Predicate-aware HNSW graph traversal. During search, only spatially-qualifying nodes are visited, using 2-hop expansion to bridge over non-qualifying nodes.     | Queries with moderate-to-broad spatial predicates (5km+ radius, metro polygons). No index rebuild needed when predicates change. |
+| **ACORN-gamma**   | Same search as ACORN-1 but built on a denser graph (gamma*M neighbors per node). More neighbors mean the 2-hop expansion covers more qualifying candidates.     | Same use case as ACORN-1 but with higher recall at the cost of larger index size and longer build time.                          |
+| **Grid-HNSW**     | Spatially partitions data using S2 cells, builds per-partition HNSW indexes, searches only relevant partitions.                                                  | Queries with consistent spatial patterns. Faster than ACORN but requires lat/lng columns at index creation.                      |
 
 ---
 
@@ -53,8 +51,9 @@ SQL Query (e.g. "find 10 nearest vectors within 5km of a point")
 ┌─────────────────────────────────────────────────┐
 │  Backend (BE) — C++                              │
 │  SegmentIterator detects index type from meta:   │
-│    - "acorn"     → AcornIndexReader              │
-│    - "grid_hnsw" → SpatialVectorIndexReader      │
+│    - "acorn"       → AcornIndexReader (gamma=1)  │
+│    - "acorn_gamma" → AcornIndexReader (gamma>1)  │
+│    - "grid_hnsw"   → SpatialVectorIndexReader    │
 │  Loads .vi file, parses HNSW graph, runs search  │
 │  Returns top-K row IDs + distances               │
 └─────────────────────────────────────────────────┘
@@ -135,6 +134,37 @@ DUPLICATE KEY(id)
 DISTRIBUTED BY HASH(id) BUCKETS 4
 PROPERTIES("replication_num" = "1");
 ```
+
+### ACORN-gamma Index
+
+ACORN-gamma builds a denser graph at construction time. The `gamma` parameter (default 2) multiplies the number of neighbors per node, giving the 2-hop search more qualifying candidates to find. The `M` you specify is the *base* M; the actual graph is built with `M * gamma` neighbors.
+
+```sql
+CREATE TABLE my_vectors_gamma (
+    id          BIGINT       NOT NULL,
+    lat         DOUBLE       NOT NULL,
+    lng         DOUBLE       NOT NULL,
+    vector_col  ARRAY<FLOAT> NOT NULL,
+    INDEX vec_idx (vector_col) USING VECTOR(
+        "index_type"       = "acorn_gamma",
+        "dim"              = "128",
+        "metric_type"      = "l2_distance",
+        "is_vector_normed" = "false",
+        "M"                = "16",         -- base M (actual graph: M * gamma = 32)
+        "efconstruction"   = "40",
+        "gamma"            = "2"           -- graph density multiplier (>= 2)
+    )
+) ENGINE=OLAP
+DUPLICATE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 4
+PROPERTIES("replication_num" = "1");
+```
+
+**Trade-offs vs ACORN-1:**
+- Higher recall under selective predicates (more graph connectivity)
+- Larger index on disk (~gamma times larger neighbor lists)
+- Longer build time (more neighbors to compute during construction)
+- Queries against the index syntax are identical to ACORN-1
 
 ### Grid-HNSW Index
 
@@ -298,12 +328,13 @@ The same SQL works on tables with standard HNSW indexes — the spatial predicat
 ### Index Build Parameters
 
 
-| Parameter                   | Default | Range  | Effect                                                                |
-| --------------------------- | ------- | ------ | --------------------------------------------------------------------- |
-| `M`                         | 16      | 8-64   | Graph connectivity. Higher = better recall but more memory/build time |
-| `efconstruction`            | 40      | 40-500 | Build-time search quality. Higher = better graph but slower build     |
-| `s2_level` (Grid-HNSW only) | 12      | 10-14  | Spatial partition granularity. 12 = ~3km cells, 14 = ~300m cells      |
-| `dim`                       | —       | 1-2048 | Must match your vector dimension exactly                              |
+| Parameter                       | Default | Range  | Effect                                                                   |
+| ------------------------------- | ------- | ------ | ------------------------------------------------------------------------ |
+| `M`                             | 16      | 8-64   | Graph connectivity. Higher = better recall but more memory/build time    |
+| `efconstruction`                | 40      | 40-500 | Build-time search quality. Higher = better graph but slower build        |
+| `gamma` (ACORN_GAMMA only)      | 2       | 2-8    | Graph density multiplier. Actual neighbors = M * gamma. Higher = better recall, larger index |
+| `s2_level` (Grid-HNSW only)     | 12      | 10-14  | Spatial partition granularity. 12 = ~3km cells, 14 = ~300m cells         |
+| `dim`                           | —       | 1-2048 | Must match your vector dimension exactly                                 |
 
 
 ### Query-Time Parameters
@@ -318,12 +349,13 @@ For Grid-HNSW, the number of S2 cells searched is determined automatically from 
 ### Which Index to Choose?
 
 
-| Scenario                                           | Recommendation                                                |
-| -------------------------------------------------- | ------------------------------------------------------------- |
-| Mixed spatial predicates (various radii, polygons) | **ACORN-1** — adapts at query time                            |
-| Fixed spatial pattern (always same region)         | **Grid-HNSW** — fastest, but spatial partitioning is baked in |
-| Very selective predicates (<1km radius)            | **ACORN-1** with higher ef_search                             |
-| No spatial predicates needed                       | **Standard HNSW**                                             |
+| Scenario                                            | Recommendation                                                        |
+| --------------------------------------------------- | --------------------------------------------------------------------- |
+| Mixed spatial predicates (various radii, polygons)  | **ACORN-1** — adapts at query time, smallest index                    |
+| Recall is critical under selective predicates        | **ACORN-gamma** — denser graph compensates for filtered-out neighbors |
+| Fixed spatial pattern (always same region)           | **Grid-HNSW** — fastest, but spatial partitioning is baked in         |
+| Very selective predicates (<1km radius)              | **ACORN-gamma** (gamma=4) or **ACORN-1** with higher ef_search       |
+| No spatial predicates needed                         | **Standard HNSW**                                                     |
 | Highest possible recall required                   | **Brute force** (no index)                                    |
 
 
@@ -339,7 +371,10 @@ cd research/06_s2_hnsw_execution_program/benchmarks
 # Fastest: only re-run ACORN queries using existing data and cached B0 results
 ./run_full_benchmark.sh --skip-load --skip-baseline --only acorn
 
-# Re-run both ACORN and Grid-HNSW, skip baseline
+# Run only ACORN-gamma
+./run_full_benchmark.sh --skip-load --skip-baseline --only acorn_gamma
+
+# Re-run ACORN, ACORN-gamma, and Grid-HNSW, skip baseline
 ./run_full_benchmark.sh --skip-load --skip-baseline
 
 # Full benchmark including baseline

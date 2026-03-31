@@ -87,7 +87,12 @@ public class VectorIndexParams {
         // Spatially partitioned HNSW: data partitioned by S2 cell at write time,
         // each cell gets its own HNSW index. At query time only cells overlapping
         // the spatial predicate are searched.
-        GRID_HNSW
+        GRID_HNSW,
+
+        // ACORN-gamma: builds a denser HNSW graph with gamma*M neighbors per node,
+        // then uses the same ACORN predicate-aware 2-hop search at query time.
+        // The denser graph improves recall under selective spatial predicates.
+        ACORN_GAMMA
     }
 
     public enum MetricsType {
@@ -185,6 +190,14 @@ public class VectorIndexParams {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw new SemanticException("Value of `IS_SPATIAL_PARTITIONED` must be `true` or `false`");
                 }
+            }
+        },
+
+        // For ACORN_GAMMA
+        GAMMA(VectorIndexType.ACORN_GAMMA) {
+            @Override
+            public void check(String value) {
+                validateInteger(value, "GAMMA", 2);
             }
         };
 

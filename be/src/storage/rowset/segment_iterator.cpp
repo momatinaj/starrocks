@@ -742,16 +742,32 @@ Status SegmentIterator::_init_ann_reader() {
 
     auto tablet_index_meta = std::make_shared<TabletIndex>(hit_indexes[0]);
 
-    // Check if this is an ACORN index type
+    // Check if this is an ACORN or ACORN_GAMMA index type
     const auto& common_props = tablet_index_meta->common_properties();
     auto type_it = common_props.find("index_type");
-    if (type_it != common_props.end() && type_it->second == "acorn") {
+    bool is_acorn_type = (type_it != common_props.end() &&
+                          (type_it->second == "acorn" || type_it->second == "acorn_gamma"));
+    if (is_acorn_type) {
         std::string index_path = IndexDescriptor::vector_index_file_path(
                 _opts.rowset_path, _opts.rowsetid.to_string(), segment_id(), tablet_index_meta->index_id());
         if (fs::path_exist(index_path)) {
             _vector_index_ctx->acorn_reader = std::make_unique<AcornIndexReader>();
             auto st = _vector_index_ctx->acorn_reader->init(index_path);
             if (st.ok() && _vector_index_ctx->acorn_reader->is_valid()) {
+                if (type_it->second == "acorn_gamma") {
+                    int gamma = 2;
+                    auto gamma_it = _vector_index_ctx->query_params.find("acorn_gamma");
+                    if (gamma_it != _vector_index_ctx->query_params.end()) {
+                        gamma = std::stoi(gamma_it->second);
+                    } else {
+                        auto idx_gamma_it = tablet_index_meta->index_properties().find("gamma");
+                        if (idx_gamma_it != tablet_index_meta->index_properties().end()) {
+                            gamma = std::stoi(idx_gamma_it->second);
+                        }
+                    }
+                    _vector_index_ctx->acorn_reader->set_gamma(gamma);
+                    LOG(INFO) << "ACORN_GAMMA reader: gamma=" << gamma;
+                }
                 auto pred_spec = AcornPredicateSpec::from_query_params(_vector_index_ctx->query_params);
                 LOG(INFO) << "ACORN predicate spec: type=" << static_cast<int>(pred_spec.type)
                           << " lat_col=" << pred_spec.lat_column_name

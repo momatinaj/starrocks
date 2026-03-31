@@ -121,9 +121,10 @@ public class VectorIndexUtil {
             throw new SemanticException("The vector index type is unknown");
         }
 
-        // ACORN and GRID_HNSW use identical construction/search params to HNSW
+        // ACORN, GRID_HNSW, and ACORN_GAMMA use identical construction/search params to HNSW
         VectorIndexType paramValidationType;
-        if (vectorIndexType == VectorIndexType.ACORN || vectorIndexType == VectorIndexType.GRID_HNSW) {
+        if (vectorIndexType == VectorIndexType.ACORN || vectorIndexType == VectorIndexType.GRID_HNSW
+                || vectorIndexType == VectorIndexType.ACORN_GAMMA) {
             paramValidationType = VectorIndexType.HNSW;
         } else {
             paramValidationType = vectorIndexType;
@@ -178,6 +179,29 @@ public class VectorIndexUtil {
                 throw new SemanticException("`lng_column` is required for GRID_HNSW index");
             }
             properties.put("is_spatial_partitioned", "true");
+        }
+
+        if (vectorIndexType == VectorIndexType.ACORN_GAMMA) {
+            String gammaStr = properties.getOrDefault(IndexParamsKey.GAMMA.name().toUpperCase(),
+                    properties.getOrDefault("gamma", "2"));
+            int gamma = Integer.parseInt(gammaStr);
+            if (gamma < 2) {
+                throw new SemanticException("`gamma` must be >= 2 for ACORN_GAMMA index");
+            }
+
+            String mStr = properties.getOrDefault(IndexParamsKey.M.name().toUpperCase(),
+                    properties.getOrDefault("m", "16"));
+            int baseM = Integer.parseInt(mStr);
+            int effectiveM = baseM * gamma;
+            properties.put(IndexParamsKey.M.name().toUpperCase(), String.valueOf(effectiveM));
+
+            String efStr = properties.getOrDefault(IndexParamsKey.EFCONSTRUCTION.name().toUpperCase(),
+                    properties.getOrDefault("efconstruction", "40"));
+            int efConstruction = Integer.parseInt(efStr);
+            int effectiveEf = Math.max(efConstruction, effectiveM);
+            properties.put(IndexParamsKey.EFCONSTRUCTION.name().toUpperCase(), String.valueOf(effectiveEf));
+
+            properties.put(IndexParamsKey.GAMMA.name().toUpperCase(), gammaStr);
         }
 
         // add default properties

@@ -12,10 +12,11 @@ Usage:
     python3 run_benchmark.py --mode acorn --port 9030  --rows 100000
 
 Modes:
-    b0    - Brute force (no vector index). Ground truth for recall.
-    a0    - Official StarRocks release with standard HNSW ANN.
-    b2    - Custom build with planner fallback (SPATIAL_FILTER + EXACT_DISTANCE).
-    acorn - Custom build with ACORN-1 predicate-aware HNSW search.
+    b0          - Brute force (no vector index). Ground truth for recall.
+    a0          - Official StarRocks release with standard HNSW ANN.
+    b2          - Custom build with planner fallback (SPATIAL_FILTER + EXACT_DISTANCE).
+    acorn       - Custom build with ACORN-1 predicate-aware HNSW search.
+    acorn_gamma - Custom build with ACORN-gamma (denser graph, gamma*M neighbors).
 
 Requirements:
     pip3 install pymysql numpy
@@ -182,6 +183,17 @@ ACORN_INDEX_CLAUSE = """,
         "efconstruction" = "40"
     )"""
 
+ACORN_GAMMA_INDEX_CLAUSE = """,
+    INDEX vec_idx (embedding) USING VECTOR(
+        "index_type" = "acorn_gamma",
+        "dim" = "{dim}",
+        "metric_type" = "l2_distance",
+        "is_vector_normed" = "false",
+        "M" = "16",
+        "efconstruction" = "40",
+        "gamma" = "2"
+    )"""
+
 GRID_HNSW_INDEX_CLAUSE = """,
     INDEX vec_idx (embedding) USING VECTOR(
         "index_type" = "grid_hnsw",
@@ -206,6 +218,8 @@ def create_table(conn, mode, dim):
         idx = ""
     elif mode == "acorn":
         idx = ACORN_INDEX_CLAUSE.format(dim=dim)
+    elif mode == "acorn_gamma":
+        idx = ACORN_GAMMA_INDEX_CLAUSE.format(dim=dim)
     elif mode == "grid":
         idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim)
     else:
@@ -406,6 +420,7 @@ MODE_DESCRIPTIONS = {
     "a0": "Official StarRocks ANN (HNSW)",
     "b2": "Custom Planner Fallback (SPATIAL_FILTER + EXACT_DISTANCE)",
     "acorn": "ACORN-1 Predicate-Aware HNSW",
+    "acorn_gamma": "ACORN-gamma Dense-Graph HNSW (gamma=2)",
     "grid": "Grid-HNSW (Spatially Partitioned HNSW)",
 }
 
@@ -443,8 +458,8 @@ def main():
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["b0", "a0", "b2", "acorn", "grid"],
-        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback), acorn (ACORN-1), grid (Grid-HNSW)",
+        choices=["b0", "a0", "b2", "acorn", "acorn_gamma", "grid"],
+        help="Benchmark mode: b0 (brute force), a0 (official ANN), b2 (planner fallback), acorn (ACORN-1), acorn_gamma (ACORN-gamma), grid (Grid-HNSW)",
     )
     parser.add_argument(
         "--host", default="127.0.0.1", help="StarRocks host (default: 127.0.0.1)"
@@ -498,7 +513,7 @@ def main():
     execute(conn, f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
     execute(conn, f"USE {DB_NAME}")
 
-    if args.mode in ("b2", "a0", "acorn", "grid"):
+    if args.mode in ("b2", "a0", "acorn", "acorn_gamma", "grid"):
         print("  Enabling vector index feature...")
         execute(
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'

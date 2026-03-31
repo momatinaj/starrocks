@@ -48,6 +48,8 @@ public class VectorSearchOptions {
     private boolean enableUseANN = false;
     private boolean useIVFPQ = false;
     private boolean useAcorn = false;
+    private boolean useAcornGamma = false;
+    private int acornGamma = 2;
     private boolean useGridHnsw = false;
     private FallbackMode fallbackMode = FallbackMode.NONE;
 
@@ -128,6 +130,22 @@ public class VectorSearchOptions {
         this.useAcorn = useAcorn;
     }
 
+    public boolean isUseAcornGamma() {
+        return useAcornGamma;
+    }
+
+    public void setUseAcornGamma(boolean useAcornGamma) {
+        this.useAcornGamma = useAcornGamma;
+    }
+
+    public int getAcornGamma() {
+        return acornGamma;
+    }
+
+    public void setAcornGamma(int acornGamma) {
+        this.acornGamma = acornGamma;
+    }
+
     public boolean isUseGridHnsw() {
         return useGridHnsw;
     }
@@ -174,6 +192,22 @@ public class VectorSearchOptions {
         }
         if (useAcorn) {
             queryParams.put("index_type", "acorn");
+            if (acornPredicateType != AcornPredicateType.NONE) {
+                queryParams.put("acorn_predicate_type", acornPredicateType.name());
+                queryParams.put("acorn_lat_column", acornLatColumn);
+                queryParams.put("acorn_lng_column", acornLngColumn);
+                if (acornPredicateType == AcornPredicateType.RADIUS) {
+                    queryParams.put("acorn_predicate_center_lat", String.valueOf(acornCenterLat));
+                    queryParams.put("acorn_predicate_center_lng", String.valueOf(acornCenterLng));
+                    queryParams.put("acorn_predicate_radius_m", String.valueOf(acornRadiusMeters));
+                } else if (acornPredicateType == AcornPredicateType.POLYGON) {
+                    queryParams.put("acorn_predicate_wkt", acornWkt);
+                }
+            }
+        }
+        if (useAcornGamma) {
+            queryParams.put("index_type", "acorn_gamma");
+            queryParams.put("acorn_gamma", String.valueOf(acornGamma));
             if (acornPredicateType != AcornPredicateType.NONE) {
                 queryParams.put("acorn_predicate_type", acornPredicateType.name());
                 queryParams.put("acorn_lat_column", acornLatColumn);

@@ -57,6 +57,9 @@ public:
 
     Status init(const std::string& index_path);
 
+    void set_gamma(int gamma) { _gamma = gamma; }
+    int gamma() const { return _gamma; }
+
     void set_vector_data(const float* vectors, int num_rows, int dim);
     void set_predicate_evaluator(std::unique_ptr<SearchPredicateEvaluator> evaluator);
 
@@ -100,6 +103,7 @@ private:
     const float* _vectors = nullptr;
     int _num_rows = 0;
     int _dim = 0;
+    int _gamma = 1;
 };
 
 } // namespace starrocks

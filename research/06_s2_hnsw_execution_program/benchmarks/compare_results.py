@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare benchmark results across modes (B0, ACORN-1, Grid-HNSW).
+Compare benchmark results across modes (B0, ACORN-1, ACORN-gamma, Grid-HNSW).
 
 Reads the latest JSON result file for each mode from the results directory
 and prints a side-by-side comparison table with latency and recall.
@@ -16,10 +16,11 @@ import os
 import sys
 from collections import defaultdict
 
-MODE_ORDER = ["b0", "acorn", "grid"]
+MODE_ORDER = ["b0", "acorn", "acorn_gamma", "grid"]
 MODE_LABELS = {
     "b0": "B0 Brute Force",
     "acorn": "ACORN-1",
+    "acorn_gamma": "ACORN-gamma",
     "grid": "Grid-HNSW",
 }
 

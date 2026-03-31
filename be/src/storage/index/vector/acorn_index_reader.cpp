@@ -178,7 +178,8 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
     std::vector<float> res_dists;
     int nres = 0;
 
-    int M = _graph.M();
+    int graph_M = _graph.M();
+    int base_M = (_gamma > 1) ? (graph_M / _gamma) : graph_M;
     int ndis = 0;
 
     // Seed candidates with the entry point (matching reference lines 1424-1436)
@@ -225,7 +226,7 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
                 // Add to result heap (max-heap of size k)
                 _heap_push(res_ids, res_dists, nres, ef, v1, d);
                 candidates.push({v1, d});
-                if (num_found >= 2 * M) break;
+                if (num_found >= 2 * base_M) break;
             }
 
             // Reference lines 1499-1533: 2-hop expansion for EVERY v1
@@ -247,7 +248,7 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
                 float d2 = _compute_distance(query, v2);
                 _heap_push(res_ids, res_dists, nres, ef, v2, d2);
                 candidates.push({v2, d2});
-                if (num_found >= 2 * M) break;
+                if (num_found >= 2 * base_M) break;
             }
         }
 
@@ -267,7 +268,10 @@ std::vector<AcornIndexReader::NodeDist> AcornIndexReader::_search_layer_acorn(co
               << " ndis=" << ndis
               << " qualifying_found=" << nres
               << " visited_size=" << visited.size()
-              << " ef=" << ef;
+              << " ef=" << ef
+              << " gamma=" << _gamma
+              << " graph_M=" << graph_M
+              << " base_M=" << base_M;
     return sorted;
 }
 
@@ -278,7 +282,8 @@ void AcornIndexReader::_search_multi_level(const float* query, int k, int ef_sea
     LOG(INFO) << "ACORN _search_multi_level: k=" << k << " ef_search=" << ef_search
               << " entry=" << entry << " top_level=" << top_level
               << " has_predicate=" << (_predicate != nullptr)
-              << " num_nodes=" << _num_rows << " dim=" << _dim;
+              << " num_nodes=" << _num_rows << " dim=" << _dim
+              << " gamma=" << _gamma;
 
     for (int level = top_level; level >= 1; level--) {
         auto layer_result = _search_layer_standard(query, entry, 1, level);

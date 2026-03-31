@@ -118,12 +118,22 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         String indexType = info.index.getProperties().get(VectorIndexParams.CommonIndexParamKey.INDEX_TYPE.name().toLowerCase());
         boolean isAcorn = VectorIndexParams.VectorIndexType.ACORN.name().equalsIgnoreCase(indexType);
         boolean isGridHnsw = VectorIndexParams.VectorIndexType.GRID_HNSW.name().equalsIgnoreCase(indexType);
+        boolean isAcornGamma = VectorIndexParams.VectorIndexType.ACORN_GAMMA.name().equalsIgnoreCase(indexType);
 
         ScalarOperator predicate = scanOp.getPredicate();
         if (predicate != null) {
             if (containsSupportedSpatialPredicate(predicate)) {
                 if (isAcorn) {
                     opts.setUseAcorn(true);
+                    extractAcornSpatialParams(predicate, scanOp, opts);
+                    opts.setEnableUseANN(true);
+                    opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
+                    return List.of(rewriteOptByDistanceColumn(topNOp, scanOp, context, predicate, info, opts));
+                }
+                if (isAcornGamma) {
+                    opts.setUseAcornGamma(true);
+                    String gamma = info.index.getProperties().getOrDefault("gamma", "2");
+                    opts.setAcornGamma(Integer.parseInt(gamma));
                     extractAcornSpatialParams(predicate, scanOp, opts);
                     opts.setEnableUseANN(true);
                     opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -153,6 +163,11 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         opts.setEnableUseANN(true);
         if (isAcorn) {
             opts.setUseAcorn(true);
+        }
+        if (isAcornGamma) {
+            opts.setUseAcornGamma(true);
+            String gamma = info.index.getProperties().getOrDefault("gamma", "2");
+            opts.setAcornGamma(Integer.parseInt(gamma));
         }
         if (isGridHnsw) {
             opts.setUseGridHnsw(true);

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 #
-# Full benchmark: B0 (brute force) vs ACORN-1 vs Grid-HNSW
+# Full benchmark: B0 (brute force) vs ACORN-1 vs ACORN-gamma vs Grid-HNSW
 # Runs all modes sequentially on the custom StarRocks cluster,
 # then prints a side-by-side comparison table.
 #
 # Usage:
-#   ./run_full_benchmark.sh                    # default 100K rows, port 9030
-#   ./run_full_benchmark.sh --rows 200000      # custom row count
-#   ./run_full_benchmark.sh --skip-load        # reuse existing tables
-#   ./run_full_benchmark.sh --skip-baseline    # skip B0 brute force (uses cached results)
+#   ./run_full_benchmark.sh                        # default 100K rows, port 9030
+#   ./run_full_benchmark.sh --rows 200000          # custom row count
+#   ./run_full_benchmark.sh --skip-load            # reuse existing tables
+#   ./run_full_benchmark.sh --skip-baseline        # skip B0 brute force (uses cached results)
 #   ./run_full_benchmark.sh --skip-load --skip-baseline  # fastest re-run
 #   ./run_full_benchmark.sh --only acorn --skip-load     # run only ACORN-1
+#   ./run_full_benchmark.sh --only acorn_gamma --skip-load  # run only ACORN-gamma
 #   ./run_full_benchmark.sh --only grid  --skip-load     # run only Grid-HNSW
 #
 # When do you need to reload data?
@@ -57,7 +58,7 @@ done
 COMMON_ARGS="--host $HOST --port $PORT --rows $ROWS --dim $DIM --k $K --queries $QUERIES --warmup $WARMUP --output $OUT $SKIP_LOAD"
 
 echo "============================================================"
-echo " Full Benchmark: B0 vs ACORN-1 vs Grid-HNSW"
+echo " Full Benchmark: B0 vs ACORN-1 vs ACORN-gamma vs Grid-HNSW"
 echo "============================================================"
 echo "  Host:    $HOST:$PORT"
 echo "  Rows:    $ROWS"
@@ -103,6 +104,29 @@ if echo "$ACORN_CHECK" | grep -qi "must in\|should not"; then
 fi
 echo "   OK"
 
+echo ">> Checking ACORN_GAMMA index type support..."
+ACORN_GAMMA_CHECK=$(mysql -h "$HOST" -P "$PORT" -u root -N -e "
+  CREATE DATABASE IF NOT EXISTS bench_spatial_vector;
+  USE bench_spatial_vector;
+  DROP TABLE IF EXISTS tmp_acorn_gamma_probe;
+  CREATE TABLE tmp_acorn_gamma_probe (
+    id BIGINT NOT NULL,
+    v ARRAY<FLOAT> NOT NULL,
+    INDEX vi (v) USING VECTOR(\"index_type\"=\"acorn_gamma\",\"dim\"=\"4\",\"metric_type\"=\"l2_distance\",\"is_vector_normed\"=\"false\",\"M\"=\"16\",\"efconstruction\"=\"40\",\"gamma\"=\"2\")
+  ) ENGINE=OLAP DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\");
+  DROP TABLE IF EXISTS tmp_acorn_gamma_probe;
+" 2>&1) || true
+if echo "$ACORN_GAMMA_CHECK" | grep -qi "must in\|should not"; then
+    echo ""
+    echo "WARNING: The running FE does not support index_type=ACORN_GAMMA."
+    echo "         ACORN-gamma benchmark will be skipped."
+    echo ""
+    SKIP_ACORN_GAMMA=1
+else
+    SKIP_ACORN_GAMMA=0
+fi
+echo "   OK"
+
 echo ">> Checking GRID_HNSW index type support..."
 GRID_CHECK=$(mysql -h "$HOST" -P "$PORT" -u root -N -e "
   CREATE DATABASE IF NOT EXISTS bench_spatial_vector;
@@ -142,13 +166,13 @@ fi
 
 if [ "$SKIP_BASELINE" -eq 0 ]; then
     echo "============================================================"
-    echo " [1/3] B0 -- Brute Force (Ground Truth)"
+    echo " [1/4] B0 -- Brute Force (Ground Truth)"
     echo "============================================================"
     python3 "$BENCH" --mode b0 $COMMON_ARGS
     echo ""
 else
     echo "============================================================"
-    echo " [1/3] B0 -- SKIPPED (cached results)"
+    echo " [1/4] B0 -- SKIPPED (cached results)"
     echo "============================================================"
     echo ""
 fi
@@ -163,15 +187,23 @@ fi
 
 if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "acorn" ]; then
     echo "============================================================"
-    echo " [2/3] ACORN-1 -- Predicate-Aware Search"
+    echo " [2/4] ACORN-1 -- Predicate-Aware Search"
     echo "============================================================"
     python3 "$BENCH" --mode acorn $COMMON_ARGS $CLONE_ARG
     echo ""
 fi
 
+if ([ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "acorn_gamma" ]) && [ "${SKIP_ACORN_GAMMA:-0}" -eq 0 ]; then
+    echo "============================================================"
+    echo " [3/4] ACORN-gamma -- Dense-Graph Predicate-Aware Search"
+    echo "============================================================"
+    python3 "$BENCH" --mode acorn_gamma $COMMON_ARGS $CLONE_ARG
+    echo ""
+fi
+
 if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then
     echo "============================================================"
-    echo " [3/3] GRID -- Grid-HNSW Spatially Partitioned Search"
+    echo " [4/4] GRID -- Grid-HNSW Spatially Partitioned Search"
     echo "============================================================"
     python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
     echo ""
