@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare benchmark results across all modes (b0, a0, b2, acorn).
+Compare benchmark results across modes (B0, ACORN-1, Grid-HNSW).
 
 Reads the latest JSON result file for each mode from the results directory
 and prints a side-by-side comparison table with latency and recall.

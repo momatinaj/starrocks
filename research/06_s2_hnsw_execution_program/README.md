@@ -1,76 +1,64 @@
-# S2 HNSW Execution Program
+# Spatial-Vector Execution Program
 
-This directory is the operational workspace for implementing and validating an **S2 spatial-partitioned HNSW index with boundary repair and query planner fallback** in StarRocks.
+Implementation of hybrid spatial+vector search indexes in StarRocks.
 
-It is intentionally separate from the higher-level research notes under `research/01_*` through `research/05_*`.
+## Shipped Features
 
-## Purpose
+Two new vector index types that integrate spatial filtering directly into the ANN search algorithm:
 
-This program exists to make the work:
+| Index Type | FE Flag | BE Reader | Status |
+|------------|---------|-----------|--------|
+| **ACORN-1** | `useAcorn=true` | `AcornIndexReader` | Shipped |
+| **Grid-HNSW** | `useGridHnsw=true` | `SpatialVectorIndexReader` | Shipped |
+| Planner fallback | `fallbackMode=SPATIAL_FILTER_EXACT` | Standard HNSW + post-filter | Shipped |
 
-- implementation-oriented
-- phaseable in agile sprints
-- benchmarkable against stable baselines
-- ablation-friendly, so every optimization can be measured independently
+## Key Files
 
-## Relationship To Existing Research
+### Documentation
 
-This execution program is grounded in:
+| File | Purpose |
+|------|---------|
+| [PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md) | Deployment, DDL, queries, tuning, troubleshooting |
+| [MASTER_PLAN.md](MASTER_PLAN.md) | Roadmap, phase tracking, deferred work |
+| [ABLATION_MATRIX.md](ABLATION_MATRIX.md) | Benchmark configuration definitions |
+| [RISKS_AND_ASSUMPTIONS.md](RISKS_AND_ASSUMPTIONS.md) | Risk register with mitigation status |
 
-- `research/03_algorithmic_design/spatial_partitioned_hnsw.md`
-- `research/03_algorithmic_design/cost_model.md`
-- `research/03_algorithmic_design/spatial_vector_correlation.md`
-- `research/04_starrocks_design/architecture_fit.md`
-- `research/04_starrocks_design/segment_integration.md`
+### Benchmark Suite
 
-Those files explain **why** the design is promising. This directory defines **how** to implement and validate it.
+| File | Purpose |
+|------|---------|
+| [benchmarks/run_full_benchmark.sh](benchmarks/run_full_benchmark.sh) | One-command B0 vs ACORN vs Grid-HNSW comparison |
+| [benchmarks/run_benchmark.py](benchmarks/run_benchmark.py) | Per-mode benchmark runner (data gen, load, query, recall) |
+| [benchmarks/generate_report.py](benchmarks/generate_report.py) | HTML report with latency/recall charts |
+| [benchmarks/compare_results.py](benchmarks/compare_results.py) | Side-by-side text comparison table |
 
-## Program Artifacts
+### StarRocks Source (key touchpoints)
 
-- `MASTER_PLAN.md`
-  High-level program map, phase sequencing, architecture slices, and delivery principles.
+**Frontend (Java):**
+- `fe/fe-core/.../sql/optimizer/rule/transformation/RewriteToVectorPlanRule.java` — routes spatial+vector queries to ACORN / Grid-HNSW / fallback
+- `fe/fe-core/.../common/VectorSearchOptions.java` — carries `useAcorn`, `useGridHnsw`, predicate params
 
-- `ABLATION_MATRIX.md`
-  Contract for baselines, feature toggles, datasets, metrics, and expected comparisons.
+**Backend (C++):**
+- `be/src/storage/index/vector/acorn_index_reader.{h,cpp}` — ACORN-1 search algorithm
+- `be/src/storage/index/vector/hnsw_graph_accessor.{h,cpp}` — Faiss binary parser for HNSW graphs
+- `be/src/storage/index/vector/search_predicate_evaluator.{h,cpp}` — spatial predicate evaluation
+- `be/src/storage/index/vector/spatial_vector_index_reader.{h,cpp}` — Grid-HNSW partitioned search
+- `be/src/storage/rowset/segment_iterator.cpp` — dispatches to ACORN / Grid-HNSW readers
 
-- `RISKS_AND_ASSUMPTIONS.md`
-  Program-level risks, assumptions, and decision checkpoints.
+## Deferred Work
 
-- `PHASE_01_foundation/` through `PHASE_06_full_package_validation/`
-  Detailed agile planning packs for each phase.
+- **Boundary repair**: cross-partition stitching for Grid-HNSW border vectors
+- **Cost model**: auto-select ACORN vs Grid-HNSW based on selectivity and spatial-vector correlation
+- **Cosine / IP metrics**: currently only `l2_distance` is supported for spatial modes
+- **Dynamic rho estimation**: per-segment correlation estimation at compaction time
 
-- `results/`
-  Reserved for later benchmark outputs, regression notes, and performance tables.
+## Getting Started
 
-## Phase Summary
+See [PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md) for the complete deployment and usage guide.
 
-1. **Foundation and Ablation Harness**
-   Define execution scaffolding, benchmark contract, and feature-switch boundaries.
-2. **Baseline Fallback**
-   Implement a correct spatial+vector fallback path without a new hybrid index.
-3. **Partitioned Index MVP**
-   Build the first S2-partitioned HNSW index.
-4. **Boundary Repair**
-   Add cross-partition recovery and measure recall gains separately.
-5. **Planner Adaptation**
-   Make the FE choose among fallback, partitioned, and repaired modes using selectivity.
-6. **Full Validation**
-   Run correctness, regression, SQL, and benchmark validation for the full package.
+Quick benchmark:
 
-## Ablation Principle
-
-Every optimization must remain independently switchable:
-
-- partitioning
-- boundary repair
-- planner fallback
-- optional correlation-aware tuning
-
-If two optimizations cannot be independently toggled, the ablation study becomes ambiguous.
-
-## Expected Future Workflow
-
-1. Use the current phase directory as the active sprint workspace.
-2. Keep implementation notes and benchmark expectations current there.
-3. Record measured results under `results/`.
-4. Promote only validated conclusions back into the higher-level research documents.
+```bash
+cd benchmarks/
+./run_full_benchmark.sh --skip-load --skip-baseline --only acorn
+```

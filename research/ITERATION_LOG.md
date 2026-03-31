@@ -7,7 +7,7 @@ This document tracks the self-growing research plan. Each iteration follows the 
 
 ## Iteration 0: Bootstrap
 
-**Date**: 2025-03-20  
+**Date**: 2026-03-20  
 **Goal**: Establish baseline understanding of StarRocks capabilities and the problem space.
 
 ### What We Gathered
@@ -59,7 +59,7 @@ StarRocks has both S2 (spatial) and TenANN (vector) libraries but they operate i
 
 ## Iteration 1: Literature Survey
 
-**Date**: 2025-03-20  
+**Date**: 2026-03-20  
 **Goal**: Map the academic landscape of filtered/constrained ANN and spatial+vector hybrid indexes.
 
 ### What We Gathered
@@ -116,7 +116,7 @@ StarRocks has both S2 (spatial) and TenANN (vector) libraries but they operate i
 
 ## Iteration 2: Industry Survey
 
-**Date**: 2025-03-20  
+**Date**: 2026-03-20  
 **Goal**: Document how production systems handle spatial+vector queries.
 
 ### What We Gathered
@@ -198,6 +198,60 @@ Based on industry validation:
 
 → Update [03_algorithmic_design/spatial_vector_correlation.md](03_algorithmic_design/spatial_vector_correlation.md), [cost_model.md](03_algorithmic_design/cost_model.md), [05_evaluation/datasets.md](05_evaluation/datasets.md)  
 → Prototype **ρ-sweep** workloads before locking **index** defaults
+
+---
+
+## Iteration 4: Implementation Shipped
+
+**Date**: 2026-03-31
+**Goal**: Ship ACORN-1 and Grid-HNSW as production-ready vector index types in StarRocks.
+
+### What We Built
+
+**ACORN-1 Index** (`index_type = "acorn"`):
+- Faithful reimplementation of ACORN-1 (Stanford, 2024) within StarRocks BE
+- Custom Faiss binary parser (`HNSWGraphAccessor`) to extract HNSW graph structure from `.vi` files without Faiss compile-time dependency
+- Predicate-aware search with 2-hop neighbor expansion: non-qualifying nodes serve as traversal bridges
+- `SearchPredicateEvaluator` with `SpatialRadiusEvaluator` for radius/polygon predicates at search time
+- FE `RewriteToVectorPlanRule` routes queries with spatial predicates to ACORN path
+
+**Grid-HNSW Index** (`index_type = "grid_hnsw"`):
+- S2-cell-based spatial partitioning with per-partition HNSW indexes
+- Lat/lng columns specified at index creation time
+- FE planner computes S2 cell covering from spatial predicate and searches only matching partitions
+- `SpatialVectorIndexReader` merges per-partition results
+
+**Benchmark Suite**:
+- `run_benchmark.py`: synthetic data generation, loading, query execution, recall computation
+- `run_full_benchmark.sh`: orchestrated B0 vs ACORN vs Grid-HNSW comparison
+- `generate_report.py`: HTML report with latency/recall charts
+- Flags: `--skip-load`, `--skip-baseline`, `--only acorn|grid`
+
+### Key Results (100K rows, 128-dim, top-10)
+
+| Query Type | ACORN-1 Recall | ACORN-1 Speedup | Grid-HNSW Recall | Grid-HNSW Speedup |
+|------------|---------------|-----------------|-----------------|-------------------|
+| Radius 1km | 0.738 | 21x | 0.652 | 30x |
+| Radius 5km | 0.990 | 12x | 0.990 | 31x |
+| Radius 20km | 0.994 | 14x | 0.988 | 31x |
+| Polygon (downtown) | 0.780 | 24x | 0.818 | 37x |
+| Polygon (metro) | 0.990 | 16x | 0.836 | 35x |
+
+### Major Bugs Found and Fixed
+
+1. **M=0 graph connectivity bug**: `cum_nneighbor_per_level` parsed incorrectly, making M=0 and all neighbor lookups return empty. Fixed with offset-span recovery.
+2. **WRITEXBVECTOR parsing**: Faiss stores `vec.size()/4` for the `IndexFlat::codes` size field. Our parser read this as the actual byte count, corrupting the file stream.
+3. **Predicate evaluator null pointer**: `_satisfies_predicate` crashed when `ext_id < 0` due to missing bounds check.
+
+### What Remains (Deferred)
+
+- Boundary repair for Grid-HNSW (cross-partition stitching for border vectors)
+- Correlation-aware cost model (auto-select ACORN vs Grid-HNSW based on rho)
+- Cosine / inner-product metric support
+
+### Reference
+
+See [06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md](06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md) for deployment, usage, and benchmarking.
 
 ---
 

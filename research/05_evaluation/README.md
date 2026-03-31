@@ -17,34 +17,32 @@ This section defines how to benchmark and validate the hybrid spatial+vector ind
 | **Performance** | How fast are queries? (Latency, QPS) |
 | **Scalability** | How does performance change with data size? |
 | **Selectivity sensitivity** | How does spatial selectivity affect performance? |
-| **Correlation sensitivity** | How does **spatial–vector correlation** (positive / zero / negative ρ) affect strategy choice, recall, and oversampling? |
+| **Correlation sensitivity** | How does spatial-vector correlation affect strategy choice, recall, and oversampling? |
 | **Build cost** | How expensive is index construction? |
 | **Storage cost** | How much additional disk space is needed? |
 | **Memory cost** | How much additional RAM is needed? |
 
-## Evaluation Phases
+## Current Benchmark Implementation
 
-### Phase 1: Micro-benchmarks (In-Process)
-- Single-segment, single-thread tests
-- Focus: Recall@K, per-query latency, memory usage
-- Tool: Google Benchmark framework + custom harness
-- Location: `be/test/storage/index/hybrid_vector_index_test.cpp`
+The benchmark suite lives in `research/06_s2_hnsw_execution_program/benchmarks/`:
 
-### Phase 2: Integration Tests (Single Node)
-- Full StarRocks instance with SQL queries
-- Focus: End-to-end latency, QPS, query planner behavior
-- Tool: SQL test framework (`test/sql/`)
-- Location: `test/sql/test_hybrid_vector_index/`
+- `run_benchmark.py` — generates synthetic data, loads into StarRocks, executes queries, computes recall
+- `run_full_benchmark.sh` — one-command B0 vs ACORN-1 vs Grid-HNSW comparison
+- `generate_report.py` — HTML report with latency/recall charts
+- `compare_results.py` — side-by-side text comparison table
 
-### Phase 3: Scale Tests (Multi-Node)
-- Distributed StarRocks cluster
-- Focus: Scalability, cross-tablet merging, shared-data mode
-- Tool: Cluster test harness
-- Location: `test/sql/test_hybrid_vector_index_scale/`
+Run the benchmark:
+
+```bash
+cd research/06_s2_hnsw_execution_program/benchmarks/
+./run_full_benchmark.sh
+```
+
+See [06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md](../06_s2_hnsw_execution_program/PRODUCTION_GUIDE.md) for the full benchmarking guide.
 
 ## Navigation
 
-- [Datasets](datasets.md) — Data sources and **ρ-controlled** synthetic generation
+- [Datasets](datasets.md) — Data sources and rho-controlled synthetic generation
 - [Metrics](metrics.md) — What and how to measure
 - [Test Queries](test_queries.md) — Representative query patterns
 - [Baseline Results](baseline_results.md) — Expected naive approach performance

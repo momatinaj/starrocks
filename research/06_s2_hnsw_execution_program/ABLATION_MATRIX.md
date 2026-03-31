@@ -2,173 +2,81 @@
 
 ## Purpose
 
-This document is the benchmark contract for the execution program. It defines:
+Benchmark contract defining baselines, configurations, and metrics for comparing spatial-vector search approaches.
 
-- what counts as a baseline
-- what optimization is introduced in each ablation
-- which metrics must be collected
-- which benchmark axes are mandatory
+## Configurations
 
-## Baselines
+### Baselines
 
-### `B0`: Spatial Filter + Exact Distance
+| ID | Name | Description | Benchmark Mode |
+|----|------|-------------|---------------|
+| **B0** | Brute Force | Spatial filter + exact vector distance on all survivors. Ground truth for recall. | `--mode b0` |
 
-- Apply spatial filter first
-- Compute exact vector distance on survivors
-- Use as the correctness and tiny-selectivity baseline
+### Shipped Configurations
 
-### `B1`: Existing Vector-First ANN + Spatial Post-Filter
+| ID | Name | Description | Benchmark Mode | Index Type |
+|----|------|-------------|---------------|------------|
+| **ACORN** | ACORN-1 Search | Predicate-aware HNSW traversal with 2-hop expansion. Spatial predicate evaluated during graph walk. | `--mode acorn` | `acorn` |
+| **GRID** | Grid-HNSW | S2-partitioned HNSW. Per-cell indexes, FE computes cell covering, BE searches matching partitions. | `--mode grid` | `grid_hnsw` |
 
-- Use current StarRocks vector path with oversampling/post-filter semantics
-- Represents the current non-spatially-aware ANN baseline
+### Legacy / Manual-Only Configurations
 
-### `B2`: Planner Fallback Only
+These modes are supported in `run_benchmark.py` but are not part of the default benchmark pipeline:
 
-- No new spatial-partitioned index
-- FE/BE path recognizes spatial+vector pattern and chooses fallback behavior
-- This becomes the immediate production-safe baseline for the program
+| ID | Name | Description | Benchmark Mode |
+|----|------|-------------|---------------|
+| **A0** | Official HNSW | Standard StarRocks HNSW with no spatial awareness. Requires official image on port 19030. | `--mode a0` |
+| **B2** | Planner Fallback | FE recognizes spatial+vector pattern, BE post-filters standard HNSW results. | `--mode b2` |
 
-## Ablations
+## Feature Toggle Mapping
 
-### `A0`: Existing Vector Index Only
-
-- Current vector index behavior
-- No spatial-aware planner path
-
-### `A1`: Spatial Planner Fallback
-
-- Query recognition + fallback selection
-- No new hybrid index
-
-### `A2`: S2 Partitioning Only
-
-- S2 partitioned HNSW per segment
-- No boundary repair
-- No advanced planner strategy selection beyond minimum routing
-
-### `A3`: `A2` + Boundary Repair
-
-- Add one isolated repair layer, recommended first: cross-partition stitching
-
-### `A4`: `A3` + Planner Selection
-
-- Planner chooses between brute-force, fallback, partitioned, and repaired modes using spatial selectivity
-
-### `A5`: `A4` + Optional Correlation-Aware Tuning
-
-- Experimental only
-- Allows planner/runtime decisions to read a future `ρ̂` or user hint
-
-## Feature Toggle Contract
-
-| Toggle | Meaning | Used in |
-|--------|---------|---------|
-| `use_spatial_vector_fallback` | Enable fallback path without new hybrid index | `A1`, `B2` |
-| `use_s2_partitioned_hnsw` | Enable partitioned index build/read path | `A2+` |
-| `use_boundary_repair` | Enable repair layer on top of partitioned index | `A3+` |
-| `use_selectivity_planner_choice` | Enable planner-driven strategy selection | `A4+` |
-| `use_correlation_hint` | Enable optional correlation-aware adjustments | `A5` |
-
-These names are logical placeholders for the execution program; final code-level names can differ.
+| Logical Toggle | Actual Code Surface | Where Set |
+|----------------|-------------------|-----------|
+| Use ACORN search | `VectorSearchOptions.useAcorn = true` | `RewriteToVectorPlanRule.java` |
+| Use Grid-HNSW search | `VectorSearchOptions.useGridHnsw = true` | `RewriteToVectorPlanRule.java` |
+| Fallback mode | `VectorSearchOptions.fallbackMode = "SPATIAL_FILTER_EXACT"` | `RewriteToVectorPlanRule.java` |
+| ACORN predicate type | `acorn_predicate_type` in query params | Thrift `TVectorSearchOptions` |
+| ACORN spatial params | `acorn_center_lat`, `acorn_center_lng`, `acorn_radius_m`, `acorn_polygon_wkt` | Thrift `TVectorSearchOptions` |
 
 ## Mandatory Metrics
 
-- Recall@K
-- p50 latency
-- p95 latency
-- p99 latency
-- QPS
-- build time
-- index size
-- memory overhead
-- compaction overhead
-- boundary-region recall degradation
+- Recall@K (vs B0 ground truth)
+- p50 latency (ms)
+- p95 latency (ms)
+- Speedup vs B0
 
-## Mandatory Benchmark Axes
+## Benchmark Axes
 
 ### Query axes
 
-- geometry type: bbox, polygon, radius
-- query locality: interior-heavy vs boundary-heavy
-- `k`: 1, 10, 50, 100
+- Geometry type: radius (1km, 5km, 20km), polygon (downtown, metro)
+- Selectivity: very selective (1km) to broad (20km)
 
 ### Data axes
 
-- spatial selectivity buckets
-- S2 level / spatial granularity
-- segment density profile
-- positive / zero / negative spatial-vector correlation
+- Row count: 100K (default), 500K, 1M for scale tests
+- Vector dimension: 128 (default)
 
 ### System axes
 
-- fallback vs partitioned vs repaired
-- HNSW `M`
-- `efConstruction`
-- `efSearch`
-- minimum partition build threshold
+- HNSW `M`: 16 (default)
+- `efConstruction`: 40 (default)
+- `efSearch`: auto-tuned (40 without predicate, 400 with predicate)
+- Grid-HNSW `s2_level`: 12 (default)
 
-## Benchmark Matrix
+## Default Benchmark Matrix
 
-| Case ID | Baseline / Ablation | Partitioned | Repair | Planner choice | Correlation-aware | Must run |
-|---------|---------------------|-------------|--------|----------------|-------------------|----------|
-| `C0` | `B0` | No | No | No | No | Yes |
-| `C1` | `B1` | No | No | No | No | Yes |
-| `C2` | `B2` / `A1` | No | No | Minimal fallback | No | Yes |
-| `C3` | `A2` | Yes | No | Minimal routing | No | Yes |
-| `C4` | `A3` | Yes | Yes | Minimal routing | No | Yes |
-| `C5` | `A4` | Yes | Yes | Yes | No | Yes |
-| `C6` | `A5` | Yes | Yes | Yes | Yes | Optional |
+| Case | Configuration | Command |
+|------|--------------|---------|
+| Full comparison | B0 vs ACORN vs GRID | `./run_full_benchmark.sh` |
+| ACORN only | ACORN (skip baseline) | `./run_full_benchmark.sh --skip-load --skip-baseline --only acorn` |
+| Grid only | GRID (skip baseline) | `./run_full_benchmark.sh --skip-load --skip-baseline --only grid` |
+| Scale test | 500K rows | `./run_full_benchmark.sh --rows 500000` |
 
-## Required Comparisons
+## Benchmark Output
 
-### Core comparisons
+JSON results are written to `benchmarks/results/`. Each result file records:
 
-- `B0` vs `B1`
-- `B2` vs `B1`
-- `A2` vs `B2`
-- `A3` vs `A2`
-- `A4` vs `A3`
-
-### Correlation comparisons
-
-For each of `A2`, `A3`, `A4`, run:
-
-- positive correlation workload
-- zero correlation workload
-- negative correlation workload
-
-### Boundary sensitivity comparisons
-
-For `A2` and `A3`, use the same:
-
-- S2 level
-- dataset
-- query shape
-- selectivity
-
-Only boundary intensity should change.
-
-## Success Thresholds
-
-These are planning thresholds, not final product commitments:
-
-- `A2` should show measurable pruning benefit over `B2` on selective spatial queries
-- `A3` should improve boundary-heavy recall over `A2`
-- `A4` should avoid pathological slowdowns by choosing fallback when partitioning is not beneficial
-- `A5` must not become default behavior without a measurable win over `A4`
-
-## Benchmark Output Locations
-
-- `results/baseline/`
-- `results/ablations/`
-- `results/scale/`
-- `results/regression/`
-
-Each future result drop should record:
-
-- git revision
-- dataset
-- benchmark configuration
-- feature toggles enabled
-- summary table
-- notes on anomalies
+- Mode, timestamp, row count, dimension
+- Per-query-type: p50/p95/p99 latency, recall, result count
+- Raw query results for recall computation

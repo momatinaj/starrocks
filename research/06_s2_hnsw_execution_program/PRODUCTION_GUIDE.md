@@ -19,20 +19,22 @@ Complete guide for deploying and using spatial-vector hybrid search with ACORN-1
 
 ---
 
-## 1. Overview <a name="overview"></a>
+## 1. Overview 
 
 This custom StarRocks build adds two new vector index types that combine **spatial filtering** with **approximate nearest neighbor (ANN)** search:
 
-| Index Type | How It Works | Best For |
-|------------|-------------|----------|
-| **ACORN-1** | Predicate-aware HNSW graph traversal. During search, only spatially-qualifying nodes are visited, using 2-hop expansion to bridge over non-qualifying nodes. | Queries with moderate-to-broad spatial predicates (5km+ radius, metro polygons). No index rebuild needed when predicates change. |
-| **Grid-HNSW** | Spatially partitions data using S2 cells, builds per-partition HNSW indexes, searches only relevant partitions. | Queries with consistent spatial patterns. Faster than ACORN but requires lat/lng columns at index creation. |
+
+| Index Type    | How It Works                                                                                                                                                 | Best For                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| **ACORN-1**   | Predicate-aware HNSW graph traversal. During search, only spatially-qualifying nodes are visited, using 2-hop expansion to bridge over non-qualifying nodes. | Queries with moderate-to-broad spatial predicates (5km+ radius, metro polygons). No index rebuild needed when predicates change. |
+| **Grid-HNSW** | Spatially partitions data using S2 cells, builds per-partition HNSW indexes, searches only relevant partitions.                                              | Queries with consistent spatial patterns. Faster than ACORN but requires lat/lng columns at index creation.                      |
+
 
 Both methods are dramatically faster than brute force (20-37x speedup) while maintaining high recall (0.83-0.99).
 
 ---
 
-## 2. Architecture <a name="architecture"></a>
+## 2. Architecture 
 
 ```
 SQL Query (e.g. "find 10 nearest vectors within 5km of a point")
@@ -60,7 +62,7 @@ SQL Query (e.g. "find 10 nearest vectors within 5km of a point")
 
 ---
 
-## 3. Deployment <a name="deployment"></a>
+## 3. Deployment 
 
 ### Prerequisites
 
@@ -73,7 +75,7 @@ SQL Query (e.g. "find 10 nearest vectors within 5km of a point")
 
 ```bash
 # From the repo root:
-docker compose -f docker-compose.dev.yml up -d starrocks-custom-fe starrocks-custom-be
+docker-compose -f docker-compose.dev.yml up -d starrocks-custom-fe starrocks-custom-be
 ```
 
 Wait ~40 seconds for FE and BE to initialize, then verify:
@@ -92,18 +94,18 @@ You should see `Alive: true` in the BACKENDS output.
 
 ```bash
 # Build FE
-docker compose -f docker-compose.dev.yml run --rm build-fe
+docker-compose -f docker-compose.dev.yml run --rm build-fe
 
 # Build BE
-docker compose -f docker-compose.dev.yml run --rm build-be
+docker-compose -f docker-compose.dev.yml run --rm build-be
 
 # Restart services
-docker compose -f docker-compose.dev.yml restart starrocks-custom-fe starrocks-custom-be
+docker-compose -f docker-compose.dev.yml restart starrocks-custom-fe starrocks-custom-be
 ```
 
 ---
 
-## 4. Creating Tables with Spatial-Vector Indexes <a name="creating-tables"></a>
+## 4. Creating Tables with Spatial-Vector Indexes 
 
 ### ACORN-1 Index
 
@@ -185,7 +187,7 @@ PROPERTIES("replication_num" = "1");
 
 ---
 
-## 5. Loading Your Own Data <a name="loading-data"></a>
+## 5. Loading Your Own Data 
 
 ### From CSV / Files
 
@@ -244,7 +246,7 @@ SHOW INDEX FROM my_vectors;
 
 ---
 
-## 6. Writing Queries <a name="writing-queries"></a>
+## 6. Writing Queries 
 
 ### Basic Vector Search (no spatial filter)
 
@@ -291,20 +293,23 @@ The same SQL works on tables with standard HNSW indexes — the spatial predicat
 
 ---
 
-## 7. Tuning Parameters <a name="tuning-parameters"></a>
+## 7. Tuning Parameters 
 
 ### Index Build Parameters
 
-| Parameter | Default | Range | Effect |
-|-----------|---------|-------|--------|
-| `M` | 16 | 8-64 | Graph connectivity. Higher = better recall but more memory/build time |
-| `efconstruction` | 40 | 40-500 | Build-time search quality. Higher = better graph but slower build |
-| `s2_level` (Grid-HNSW only) | 12 | 10-14 | Spatial partition granularity. 12 = ~3km cells, 14 = ~300m cells |
-| `dim` | — | 1-2048 | Must match your vector dimension exactly |
+
+| Parameter                   | Default | Range  | Effect                                                                |
+| --------------------------- | ------- | ------ | --------------------------------------------------------------------- |
+| `M`                         | 16      | 8-64   | Graph connectivity. Higher = better recall but more memory/build time |
+| `efconstruction`            | 40      | 40-500 | Build-time search quality. Higher = better graph but slower build     |
+| `s2_level` (Grid-HNSW only) | 12      | 10-14  | Spatial partition granularity. 12 = ~3km cells, 14 = ~300m cells      |
+| `dim`                       | —       | 1-2048 | Must match your vector dimension exactly                              |
+
 
 ### Query-Time Parameters
 
 The query planner automatically sets `ef_search` based on K and whether a predicate is present:
+
 - Without predicate: `ef_search = max(40, K * 4)`
 - With predicate (ACORN): `ef_search = max(400, K * 40)`
 
@@ -312,17 +317,19 @@ For Grid-HNSW, the number of S2 cells searched is determined automatically from 
 
 ### Which Index to Choose?
 
-| Scenario | Recommendation |
-|----------|---------------|
-| Mixed spatial predicates (various radii, polygons) | **ACORN-1** — adapts at query time |
-| Fixed spatial pattern (always same region) | **Grid-HNSW** — fastest, but spatial partitioning is baked in |
-| Very selective predicates (<1km radius) | **ACORN-1** with higher ef_search |
-| No spatial predicates needed | **Standard HNSW** |
-| Highest possible recall required | **Brute force** (no index) |
+
+| Scenario                                           | Recommendation                                                |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| Mixed spatial predicates (various radii, polygons) | **ACORN-1** — adapts at query time                            |
+| Fixed spatial pattern (always same region)         | **Grid-HNSW** — fastest, but spatial partitioning is baked in |
+| Very selective predicates (<1km radius)            | **ACORN-1** with higher ef_search                             |
+| No spatial predicates needed                       | **Standard HNSW**                                             |
+| Highest possible recall required                   | **Brute force** (no index)                                    |
+
 
 ---
 
-## 8. Benchmarking with Your Data <a name="benchmarking"></a>
+## 8. Benchmarking with Your Data 
 
 ### Quick Re-run (skip baseline + skip data loading)
 
@@ -341,14 +348,16 @@ cd research/06_s2_hnsw_execution_program/benchmarks
 
 ### When Do You Need to Reload Data?
 
-| Situation | `--skip-load`? | `--skip-baseline`? |
-|-----------|---------------|-------------------|
-| First run ever | No | No |
-| Changed `--rows` or `--dim` | No | No |
-| Code changes only (same data) | Yes | Yes (if B0 results exist) |
-| Changed index parameters (M, ef) | No (need rebuild) | Yes |
-| Same server, different session | Yes | Yes |
-| Different server | No | No |
+
+| Situation                        | `--skip-load`?    | `--skip-baseline`?        |
+| -------------------------------- | ----------------- | ------------------------- |
+| First run ever                   | No                | No                        |
+| Changed `--rows` or `--dim`      | No                | No                        |
+| Code changes only (same data)    | Yes               | Yes (if B0 results exist) |
+| Changed index parameters (M, ef) | No (need rebuild) | Yes                       |
+| Same server, different session   | Yes               | Yes                       |
+| Different server                 | No                | No                        |
+
 
 ### Custom Benchmark with Your Data
 
@@ -383,7 +392,7 @@ for row in results:
     print(f"  id={row[0]}, dist={row[1]:.4f}")
 ```
 
-4. **Compare recall** against brute force by running the same query on a table without a vector index.
+1. **Compare recall** against brute force by running the same query on a table without a vector index.
 
 ### Benchmark Parameters
 
@@ -400,30 +409,30 @@ for row in results:
 
 ---
 
-## 9. Production Checklist <a name="production-checklist"></a>
+## 9. Production Checklist 
 
 Before using in production, verify:
 
 ### Correctness
 
-- [ ] **Recall is acceptable** for your use case (run benchmarks with YOUR data)
-- [ ] **Results match brute force** for representative queries (spot-check 10-20 queries)
-- [ ] **Edge cases work**: empty results, no spatial predicate, all-pass predicate
-- [ ] **Data integrity**: insert + compaction + query cycle works end-to-end
+- **Recall is acceptable** for your use case (run benchmarks with YOUR data)
+- **Results match brute force** for representative queries (spot-check 10-20 queries)
+- **Edge cases work**: empty results, no spatial predicate, all-pass predicate
+- **Data integrity**: insert + compaction + query cycle works end-to-end
 
 ### Performance
 
-- [ ] **Latency meets SLA** under expected query load
-- [ ] **Index build time** is acceptable for your data size and update frequency
-- [ ] **Memory usage** is within bounds (check BE logs for OOM warnings)
-- [ ] **Concurrent queries** don't cause excessive latency spikes
+- **Latency meets SLA** under expected query load
+- **Index build time** is acceptable for your data size and update frequency
+- **Memory usage** is within bounds (check BE logs for OOM warnings)
+- **Concurrent queries** don't cause excessive latency spikes
 
 ### Operational
 
-- [ ] **Monitoring**: BE logs contain search diagnostics (grep for "ACORN" or "GRID")
-- [ ] **Recovery**: cluster restart preserves indexes (no rebuild needed)
-- [ ] **Compaction**: vector indexes survive compaction cycles
-- [ ] **Replication**: replicated tablets maintain index consistency
+- **Monitoring**: BE logs contain search diagnostics (grep for "ACORN" or "GRID")
+- **Recovery**: cluster restart preserves indexes (no rebuild needed)
+- **Compaction**: vector indexes survive compaction cycles
+- **Replication**: replicated tablets maintain index consistency
 
 ### Limitations (Known)
 
@@ -435,46 +444,56 @@ Before using in production, verify:
 
 ---
 
-## 10. Troubleshooting <a name="troubleshooting"></a>
+## 10. Troubleshooting 
 
 ### Common Issues
 
 **Q: Query returns no results or very few results**
 Check BE logs for ACORN/GRID diagnostics:
+
 ```bash
 docker logs starrocks-custom-be 2>&1 | grep "ACORN\|GRID\|HNSW"
 ```
+
 Look for:
+
 - `M=0` → graph connectivity bug (should be auto-recovered; report if seen)
 - `ACORN reader init failed` → index file parsing error
 - `level0_neighbors=0` → graph has no edges
 
 **Q: ACORN search is slower than expected**
 The predicate might be too selective, causing excessive graph exploration. Check:
+
 ```bash
 docker logs starrocks-custom-be 2>&1 | grep "ACORN predicate stats"
 ```
+
 If `rate=` is below 1%, the predicate is very selective. Consider using a broader radius.
 
 **Q: Index doesn't seem to be used**
 Verify the index exists and is built:
+
 ```sql
 SHOW INDEX FROM my_table;
 SHOW TABLET FROM my_table;
 ```
+
 Force compaction if needed: `ALTER TABLE my_table COMPACT;`
 
 **Q: How do I check which index type is being used?**
 Check BE logs during query execution:
+
 ```bash
 docker logs starrocks-custom-be 2>&1 | grep "ACORN search\|spatial_vector_index"
 ```
 
 **Q: Cluster won't start or BE keeps restarting**
+
 ```bash
 docker logs starrocks-custom-fe 2>&1 | tail -50
 docker logs starrocks-custom-be 2>&1 | tail -50
 ```
+
 Common causes: FE needs 30-40s to initialize before BE can register.
 
 ---
@@ -501,3 +520,4 @@ docker logs starrocks-custom-be 2>&1 | grep "ACORN\|GRID\|HNSW" | tail -30
 # Stop cluster
 docker compose -f docker-compose.dev.yml down
 ```
+

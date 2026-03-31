@@ -1,4 +1,4 @@
-# Risks And Assumptions
+# Risks and Assumptions
 
 ## Assumptions
 
@@ -19,104 +19,21 @@
 - Benchmarking and correctness work will evolve in parallel with implementation planning.
 - Correlation-aware tuning remains optional until the non-correlation phases are stable.
 
-## Major Risks
+## Risk Register
 
-### R1: Partition granularity dominates outcomes
-
-Impact:
-
-- A bad S2 level can make partitioning look worse or better than it truly is.
-
-Mitigation:
-
-- benchmark multiple S2 levels
-- include dense and sparse datasets
-- keep `A2` independent from repair and planner logic
-
-### R2: Boundary repair hides partition weaknesses
-
-Impact:
-
-- If introduced too early, it becomes impossible to tell whether partitioning itself works.
-
-Mitigation:
-
-- enforce `A2` before `A3`
-- benchmark boundary-heavy and interior-heavy queries separately
-
-### R3: Planner fallback masks index design flaws
-
-Impact:
-
-- A smart planner can hide a weak partitioned index by routing around it too often.
-
-Mitigation:
-
-- require direct `A2` and `A3` runs without planner adaptation
-- compare planner-selected vs forced strategy execution
-
-### R4: Correlation-aware tuning adds noise too early
-
-Impact:
-
-- The program may become overfit to synthetic assumptions before core mechanics stabilize.
-
-Mitigation:
-
-- keep correlation-aware logic as optional `A5`
-- do not mix `A5` into acceptance of `A2` to `A4`
-
-### R5: FE/BE interface churn
-
-Impact:
-
-- planner and runtime option propagation may require multiple surfaces to change together
-
-Mitigation:
-
-- centralize FE/BE interface assumptions in the phase docs
-- test explainability and thrift propagation separately from index behavior
-
-### R6: Build and compaction cost may exceed expectations
-
-Impact:
-
-- a segment-local partitioned index may be query-fast but too costly to build or rebuild
-
-Mitigation:
-
-- measure build time and compaction overhead in every relevant phase
-- keep tiny-partition brute-force fallback in scope
+| ID | Risk | Impact | Mitigation | Status |
+|----|------|--------|------------|--------|
+| R1 | Partition granularity dominates outcomes | Bad S2 level can make partitioning look worse or better than it truly is | Benchmark multiple S2 levels; include dense and sparse datasets | **Open** — s2_level=12 is hardcoded default; multi-level benchmarks not yet run |
+| R2 | Boundary repair hides partition weaknesses | Impossible to tell whether partitioning itself works | Enforce partitioned-only runs before adding repair | **Mitigated** — Grid-HNSW ships without repair; clean ablation baseline exists |
+| R3 | Planner fallback masks index design flaws | Smart planner hides weak partitioned index by routing around it | Require direct A2 and A3 runs without planner adaptation | **Mitigated** — benchmark forces index-specific modes (ACORN vs Grid vs B0) |
+| R4 | Correlation-aware tuning adds noise too early | Program becomes overfit to synthetic assumptions | Keep correlation as optional; do not mix into acceptance of core ablations | **Mitigated** — deferred; not shipped |
+| R5 | FE/BE interface churn | Planner and runtime option propagation may break across surfaces | Centralize via Thrift `TVectorSearchOptions`; test propagation separately | **Mitigated** — FE/BE interface stable; useAcorn/useGridHnsw flow proven |
+| R6 | Build and compaction cost may exceed expectations | Segment-local partitioned index may be too costly to build/rebuild | Measure build time and compaction overhead | **Open** — sustained compaction testing not yet done |
+| R7 | Faiss binary format changes across versions | Custom parser breaks if TenANN upgrades Faiss | M=0 recovery fallback added; diagnostic logging in parser | **Partially mitigated** — recovery exists but parser may need updates |
+| R8 | Very selective predicates yield low recall | Radius <1km on sparse data leaves too few qualifying nodes for ACORN | Boost ef_search for selective predicates; document limitations | **Partially mitigated** — ef_search boosted 10x with predicates; recall ~0.74 at 1km |
 
 ## Open Decisions
 
 1. Whether the first repair mechanism is stitching, overlap, or coarse-level fallback
-2. Whether FE adaptation should extend `RewriteToVectorPlanRule` or create a dedicated hybrid rule
-3. Whether hybrid index metadata should live beside the current vector index or as a distinct index family
-
-## Review Gates
-
-### Gate 1: End of Phase 1
-
-- ablation contract accepted
-- benchmark axes fixed
-- no ambiguity about baseline definitions
-
-### Gate 2: End of Phase 3
-
-- partitioned MVP works and is benchmarkable
-- decision retained on whether repair remains the next phase
-
-### Gate 3: End of Phase 4
-
-- boundary repair delivers measurable recall value
-- repair cost is acceptable enough to justify planner integration
-
-### Gate 4: End of Phase 5
-
-- planner fallback helps more often than it hurts
-- strategy visibility is sufficient for debugging and SQL testing
-
-### Gate 5: End of Phase 6
-
-- package is benchmarked, regression-checked, and ready for implementation iteration beyond planning
+2. Whether hybrid index metadata should live beside the current vector index or as a distinct index family
+3. How to estimate spatial-vector correlation (rho) cheaply at compaction time for cost-model decisions
