@@ -59,10 +59,12 @@ def load_latest_results(results_dir, mode_order):
         print(f"Results directory not found: {results_dir}")
         return {}
 
+    modes_longest_first = sorted(mode_order, key=len, reverse=True)
+
     for fname in os.listdir(results_dir):
         if not fname.endswith(".json"):
             continue
-        for mode in mode_order:
+        for mode in modes_longest_first:
             if fname.startswith(f"{mode}_"):
                 files_by_mode[mode].append(fname)
                 break
