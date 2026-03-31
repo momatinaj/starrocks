@@ -75,6 +75,14 @@ public class IndexParams {
                 null, null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.IS_SPATIAL_PARTITIONED,
                 false, true, "true", null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.GRID_OVERSAMPLE,
+                false, false, null, null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.GRID_EXPAND_NEIGHBORS,
+                false, false, null, null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.GRID_SCAN_SMALL_CELLS,
+                false, false, null, null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.GRID_MAX_COVER_CELLS,
+                false, false, null, null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.GAMMA,
                 false, true, "2", null);
 

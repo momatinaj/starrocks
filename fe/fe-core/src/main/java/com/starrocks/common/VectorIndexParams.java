@@ -193,6 +193,38 @@ public class VectorIndexParams {
             }
         },
 
+        GRID_OVERSAMPLE(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                validateDouble(value, "GRID_OVERSAMPLE", 1.0, null);
+            }
+        },
+
+        GRID_EXPAND_NEIGHBORS(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw new SemanticException("Value of `GRID_EXPAND_NEIGHBORS` must be `true` or `false`");
+                }
+            }
+        },
+
+        GRID_SCAN_SMALL_CELLS(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw new SemanticException("Value of `GRID_SCAN_SMALL_CELLS` must be `true` or `false`");
+                }
+            }
+        },
+
+        GRID_MAX_COVER_CELLS(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                validateInteger(value, "GRID_MAX_COVER_CELLS", 1);
+            }
+        },
+
         // For ACORN_GAMMA
         GAMMA(VectorIndexType.ACORN_GAMMA) {
             @Override
