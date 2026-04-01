@@ -1,32 +1,19 @@
 #!/usr/bin/env bash
 #
-# Grid-HNSW focused benchmark: rebuild FE, restart, and run ONLY grid
-# variants (baseline + ablation). Reuses existing data and cached results
-# for other modes (B0, ACORN, ACORN-gamma) in the report.
+# Grid-HNSW ONLY benchmark — fast iteration for grid ablation studies.
+# Skips all ACORN/gamma variants. Uses cached B0 ground truth.
 #
 # Usage:
-#   # First run (load data into grid table)
-#   ./run_grid_benchmark.sh
+#   ./run_grid_benchmark.sh                           # first run (loads data)
+#   ./run_grid_benchmark.sh --skip-load               # reuse existing grid table
+#   ./run_grid_benchmark.sh --skip-load --skip-rebuild # fastest (no rebuild)
 #
-#   # Subsequent runs after code changes (skip data loading)
-#   ./run_grid_benchmark.sh --skip-load
-#
-#   # Skip FE rebuild (just re-run queries)
-#   ./run_grid_benchmark.sh --skip-load --skip-rebuild
-#
-#   # Custom oversample / max-cells
-#   ./run_grid_benchmark.sh --skip-load --grid-oversample 5 --grid-max-cells 64
-#
-#   # Use Stream Load for faster data loading
-#   ./run_grid_benchmark.sh --stream-load
-#
-
 set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BENCH="$SCRIPT_DIR/run_benchmark.py"
 COMPARE="$SCRIPT_DIR/compare_results.py"
+REPORT="$SCRIPT_DIR/generate_report.py"
 OUT="$SCRIPT_DIR/results"
 
 HOST="127.0.0.1"
@@ -35,29 +22,29 @@ HTTP_PORT=8030
 ROWS=100000
 DIM=128
 K=10
-QUERIES=50
-WARMUP=5
+QUERIES=3
+WARMUP=0
 SKIP_LOAD=""
 SKIP_REBUILD=0
 GRID_OVERSAMPLE="3"
-GRID_MAX_CELLS="500"
+GRID_MAX_CELLS="1000"
 STREAM_LOAD=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --host)    HOST="$2";    shift 2;;
-        --port)    PORT="$2";    shift 2;;
-        --http-port) HTTP_PORT="$2"; shift 2;;
-        --rows)    ROWS="$2";    shift 2;;
-        --dim)     DIM="$2";     shift 2;;
-        --k)       K="$2";      shift 2;;
-        --queries) QUERIES="$2"; shift 2;;
-        --warmup)  WARMUP="$2";  shift 2;;
-        --skip-load) SKIP_LOAD="--skip-load"; shift;;
-        --skip-rebuild) SKIP_REBUILD=1; shift;;
+        --host)           HOST="$2";           shift 2;;
+        --port)           PORT="$2";           shift 2;;
+        --http-port)      HTTP_PORT="$2";      shift 2;;
+        --rows)           ROWS="$2";           shift 2;;
+        --dim)            DIM="$2";            shift 2;;
+        --k)              K="$2";              shift 2;;
+        --queries)        QUERIES="$2";        shift 2;;
+        --warmup)         WARMUP="$2";         shift 2;;
+        --skip-load)      SKIP_LOAD="--skip-load"; shift;;
+        --skip-rebuild)   SKIP_REBUILD=1;      shift;;
         --grid-oversample) GRID_OVERSAMPLE="$2"; shift 2;;
-        --grid-max-cells)  GRID_MAX_CELLS="$2"; shift 2;;
-        --stream-load) STREAM_LOAD="--stream-load --http-port $HTTP_PORT"; shift;;
+        --grid-max-cells) GRID_MAX_CELLS="$2"; shift 2;;
+        --stream-load)    STREAM_LOAD="--stream-load --http-port $HTTP_PORT"; shift;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -65,16 +52,13 @@ done
 COMMON="--host $HOST --port $PORT --rows $ROWS --dim $DIM --k $K --queries $QUERIES --warmup $WARMUP --output $OUT $STREAM_LOAD"
 
 echo "============================================================"
-echo " Grid-HNSW Focused Benchmark"
+echo " Grid-HNSW Focused Benchmark (fast mode)"
 echo "============================================================"
 echo "  Host:       $HOST:$PORT"
-echo "  Rows:       $ROWS"
-echo "  Dim:        $DIM"
-echo "  K:          $K"
-echo "  Queries:    $QUERIES (+ $WARMUP warmup per spec)"
+echo "  Rows:       $ROWS  |  Dim: $DIM  |  K: $K"
+echo "  Queries:    $QUERIES (+ $WARMUP warmup)"
 echo "  Oversample: $GRID_OVERSAMPLE"
 echo "  Max cells:  $GRID_MAX_CELLS"
-echo "  Output:     $OUT"
 echo ""
 
 mkdir -p "$OUT"
@@ -84,122 +68,133 @@ mkdir -p "$OUT"
 # ------------------------------------------------------------------
 if [ "$SKIP_REBUILD" -eq 0 ]; then
     echo ">> Rebuilding FE..."
-    if [ -f "$PROJECT_ROOT/docker-compose.dev.yml" ]; then
+    if [ -f "$(dirname "$SCRIPT_DIR")/../../../docker-compose.dev.yml" ]; then
+        PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
         (cd "$PROJECT_ROOT" && docker-compose -f docker-compose.dev.yml run --rm build-fe 2>&1 | tail -5)
+        FE_BUILD_RC=$?
+        if [ "$FE_BUILD_RC" -ne 0 ]; then
+            echo "ERROR: FE build failed (exit code $FE_BUILD_RC)"
+            exit 1
+        fi
         echo ">> Restarting FE..."
         docker-compose -f "$PROJECT_ROOT/docker-compose.dev.yml" restart starrocks-custom-fe
-        echo "   Waiting 20s for FE to start..."
-        sleep 20
+        echo "   Waiting 25s for FE to start..."
+        sleep 25
     else
         echo "   No docker-compose.dev.yml found — skipping rebuild."
-        echo "   Use --skip-rebuild if FE is already running with latest code."
     fi
 fi
 
 # ------------------------------------------------------------------
 # Step 2: Verify StarRocks
 # ------------------------------------------------------------------
-echo ">> Verifying StarRocks..."
-if ! mysql -h "$HOST" -P "$PORT" -u root -e "SELECT 1" >/dev/null 2>&1; then
-    echo "ERROR: Cannot connect to StarRocks at $HOST:$PORT"
-    exit 1
-fi
-echo "   OK"
+echo ">> Verifying StarRocks at $HOST:$PORT ..."
+for i in 1 2 3 4 5; do
+    if mysql -h "$HOST" -P "$PORT" -u root -e "SELECT 1" >/dev/null 2>&1; then
+        echo "   OK"
+        break
+    fi
+    if [ "$i" -eq 5 ]; then
+        echo "ERROR: Cannot connect to StarRocks at $HOST:$PORT after 5 attempts"
+        exit 1
+    fi
+    echo "   Attempt $i failed, waiting 10s..."
+    sleep 10
+done
 echo ""
 
+# Enable vector index feature
+mysql -h "$HOST" -P "$PORT" -u root -e 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")' 2>/dev/null
+
 # ------------------------------------------------------------------
-# Step 3: Check for B0 ground truth
+# Step 3: Ensure B0 ground truth exists
 # ------------------------------------------------------------------
 B0_RESULTS=$(ls -t "$OUT"/b0_*.json 2>/dev/null | head -1)
 if [ -z "$B0_RESULTS" ]; then
-    echo ">> No B0 ground truth found. Running baseline first..."
+    echo ">> No B0 ground truth found. Running baseline (one-time)..."
     python3 "$BENCH" --mode b0 $COMMON
     echo ""
 else
-    echo ">> Using cached B0 ground truth: $(basename $B0_RESULTS)"
+    echo ">> Using cached B0 ground truth: $(basename "$B0_RESULTS")"
 fi
 
 # ------------------------------------------------------------------
-# Step 4: Grid baseline (load data if needed)
+# Step 4: Clean stale grid results
+# ------------------------------------------------------------------
+echo ">> Cleaning stale grid result files..."
+rm -f "$OUT"/grid_*.json "$OUT"/grid.json 2>/dev/null
+rm -f "$OUT"/grid_g*.json 2>/dev/null
+echo ""
+
+# ------------------------------------------------------------------
+# Step 5: Grid baseline (load data if needed)
 # ------------------------------------------------------------------
 echo "============================================================"
-echo " Grid-HNSW Baseline"
+echo " [1/8] Grid-HNSW Baseline"
 echo "============================================================"
 python3 "$BENCH" --mode grid $COMMON $SKIP_LOAD
 echo ""
 
 # ------------------------------------------------------------------
-# Step 5: Grid ablation variants (always --skip-load, reuse same table)
+# Step 6: Grid ablation (all reuse same table, --skip-load always)
 # ------------------------------------------------------------------
-echo ">> Cleaning stale grid ablation result files..."
-rm -f "$OUT"/grid_g*.json 2>/dev/null
-
 GRID_COMMON="$COMMON --skip-load"
 
 echo "============================================================"
-echo " Grid Ablation: G1 -- Oversample (factor=${GRID_OVERSAMPLE})"
+echo " [2/8] G1: Oversample (factor=$GRID_OVERSAMPLE)"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G2 -- Neighbor Expansion"
+echo " [3/8] G2: Neighbor Expansion"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-expand-neighbors $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G3 -- Small-Cell Scan"
+echo " [4/8] G3: Small-Cell Scan"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-scan-small $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G4 -- Max Cover Cells (${GRID_MAX_CELLS})"
+echo " [5/8] G4: Max Cover Cells ($GRID_MAX_CELLS)"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-max-cells "$GRID_MAX_CELLS" $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G1+G2 -- Oversample + Neighbors"
+echo " [6/8] G1+G2: Oversample + Neighbors"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G1+G2+G3 -- All except max_cells"
+echo " [7/8] G1+G2+G3: Oversample + Neighbors + SmallCells"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small $GRID_COMMON
 echo ""
 
 echo "============================================================"
-echo " Grid Ablation: G1+G2+G3+G4 -- All Improvements"
+echo " [8/8] G1+G2+G3+G4: All Improvements"
 echo "============================================================"
 python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small --grid-max-cells "$GRID_MAX_CELLS" $GRID_COMMON
 echo ""
 
 # ------------------------------------------------------------------
-# Step 6: Comparison and report
+# Step 7: Report
 # ------------------------------------------------------------------
 echo "============================================================"
-echo " Comparison (all modes)"
+echo " Comparison"
 echo "============================================================"
-python3 "$COMPARE" --results-dir "$OUT"
-
+python3 "$COMPARE" --results-dir "$OUT" 2>/dev/null
 echo ""
-echo "============================================================"
-echo " Generating Report"
-echo "============================================================"
-REPORT="$SCRIPT_DIR/generate_report.py"
+
 if python3 -c "import matplotlib" 2>/dev/null; then
     python3 "$REPORT" --results-dir "$OUT" --output "$OUT/benchmark_report.html"
-    echo ""
-    echo "Open the report:  open $OUT/benchmark_report.html"
-else
-    echo "  matplotlib not installed — skipping charts."
-    echo "  Install with: pip3 install matplotlib"
-    echo "  Then run:     python3 $REPORT --results-dir $OUT"
+    echo "Report: $OUT/benchmark_report.html"
 fi
 
 echo ""
-echo "Done. JSON results are in $OUT/"
+echo "Done."

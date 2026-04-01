@@ -389,7 +389,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
             }
         }
 
-        if (sv.getVectorGridMaxCoverCells() != 8) {
+        if (sv.getVectorGridMaxCoverCells() != 500) {
             opts.setGridMaxCoverCells(sv.getVectorGridMaxCoverCells());
         } else {
             String maxCoverCells = props.getOrDefault("grid_max_cover_cells",

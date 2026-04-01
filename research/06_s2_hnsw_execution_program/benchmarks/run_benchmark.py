@@ -622,7 +622,7 @@ def main():
     parser.add_argument(
         "--grid-max-cells",
         type=int,
-        default=8,
+        default=500,
         help="Grid-HNSW G4: max S2 cover cells (default: 8).",
     )
     parser.add_argument(
@@ -650,7 +650,7 @@ def main():
             grid_tags.append("g2")
         if args.grid_scan_small:
             grid_tags.append("g3")
-        if args.grid_max_cells != 8:
+        if args.grid_max_cells != 500:
             grid_tags.append("g4")
         if grid_tags:
             resolved_mode = f"grid_{'_'.join(grid_tags)}"
@@ -743,7 +743,7 @@ def main():
             grid_session_sql.append(
                 "SET vector_grid_scan_small_cells = true"
             )
-        if args.grid_max_cells != 8:
+        if args.grid_max_cells != 500:
             grid_session_sql.append(
                 f"SET vector_grid_max_cover_cells = {args.grid_max_cells}"
             )
@@ -795,7 +795,7 @@ def main():
         "grid_oversample": args.grid_oversample if args.mode == "grid" and args.grid_oversample > 1.0 else None,
         "grid_expand_neighbors": args.grid_expand_neighbors if args.mode == "grid" else None,
         "grid_scan_small_cells": args.grid_scan_small if args.mode == "grid" else None,
-        "grid_max_cover_cells": args.grid_max_cells if args.mode == "grid" and args.grid_max_cells != 8 else None,
+        "grid_max_cover_cells": args.grid_max_cells if args.mode == "grid" and args.grid_max_cells != 500 else None,
         "timestamp": timestamp,
         "results": {},
         "recalls": recalls,

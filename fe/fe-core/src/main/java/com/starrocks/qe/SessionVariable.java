@@ -1144,7 +1144,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     private boolean vectorGridScanSmallCells = false;
 
     @VarAttr(name = VECTOR_GRID_MAX_COVER_CELLS)
-    private int vectorGridMaxCoverCells = 8;
+    private int vectorGridMaxCoverCells = 500;
 
     /**
      * Determines whether to enable query tablet affinity. When enabled, attempts to schedule

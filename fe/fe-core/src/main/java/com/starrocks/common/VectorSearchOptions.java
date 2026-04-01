@@ -259,18 +259,10 @@ public class VectorSearchOptions {
         }
         if (useGridHnsw) {
             queryParams.put("index_type", "grid_hnsw");
-            if (gridOversample > 1.0f) {
-                queryParams.put("grid_oversample", String.valueOf(gridOversample));
-            }
-            if (gridExpandNeighbors) {
-                queryParams.put("grid_expand_neighbors", "true");
-            }
-            if (gridScanSmallCells) {
-                queryParams.put("grid_scan_small_cells", "true");
-            }
-            if (gridMaxCoverCells != 500) {
-                queryParams.put("grid_max_cover_cells", String.valueOf(gridMaxCoverCells));
-            }
+            queryParams.put("grid_oversample", String.valueOf(gridOversample));
+            queryParams.put("grid_expand_neighbors", String.valueOf(gridExpandNeighbors));
+            queryParams.put("grid_scan_small_cells", String.valueOf(gridScanSmallCells));
+            queryParams.put("grid_max_cover_cells", String.valueOf(gridMaxCoverCells));
             if (acornPredicateType != AcornPredicateType.NONE) {
                 queryParams.put("grid_predicate_type", acornPredicateType.name());
                 queryParams.put("grid_lat_column", acornLatColumn);
