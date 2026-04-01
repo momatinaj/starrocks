@@ -45,6 +45,8 @@ GAMMA_SWEEP=0
 GRID_ABLATION=0
 GRID_OVERSAMPLE="3"
 GRID_MAX_CELLS="500"
+STREAM_LOAD=""
+HTTP_PORT=8030
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -63,11 +65,13 @@ while [[ $# -gt 0 ]]; do
         --grid-ablation) GRID_ABLATION=1; shift;;
         --grid-oversample) GRID_OVERSAMPLE="$2"; shift 2;;
         --grid-max-cells)  GRID_MAX_CELLS="$2"; shift 2;;
+        --stream-load) STREAM_LOAD="--stream-load"; shift;;
+        --http-port)   HTTP_PORT="$2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
 
-COMMON_ARGS="--host $HOST --port $PORT --rows $ROWS --dim $DIM --k $K --queries $QUERIES --warmup $WARMUP --output $OUT $SKIP_LOAD"
+COMMON_ARGS="--host $HOST --port $PORT --rows $ROWS --dim $DIM --k $K --queries $QUERIES --warmup $WARMUP --output $OUT $SKIP_LOAD $STREAM_LOAD --http-port $HTTP_PORT"
 
 echo "============================================================"
 echo " Full Benchmark: B0 vs ACORN-1 vs ACORN-gamma vs Grid-HNSW"
@@ -239,47 +243,52 @@ if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then
     python3 "$BENCH" --mode grid $COMMON_ARGS $CLONE_ARG
     echo ""
 
+    # Grid ablation: all variants share the same table + index.
+    # Behavior is changed via session variables, not DDL properties.
+    # No data reload or table creation is needed.
     if [ "$GRID_ABLATION" -eq 1 ]; then
+        GRID_COMMON="$COMMON_ARGS --skip-load"
+
         echo "============================================================"
         echo " Grid Ablation: G1 -- Oversample (factor=${GRID_OVERSAMPLE})"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G2 -- Neighbor Expansion"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-expand-neighbors $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-expand-neighbors $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G3 -- Small-Cell Scan"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-scan-small $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-scan-small $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G4 -- Max Cover Cells (${GRID_MAX_CELLS})"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-max-cells "$GRID_MAX_CELLS" $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-max-cells "$GRID_MAX_CELLS" $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G1+G2 -- Oversample + Neighbors"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G1+G2+G3 -- All except max_cells"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small $GRID_COMMON
         echo ""
 
         echo "============================================================"
         echo " Grid Ablation: G1+G2+G3+G4 -- All Improvements"
         echo "============================================================"
-        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small --grid-max-cells "$GRID_MAX_CELLS" $COMMON_ARGS $CLONE_ARG
+        python3 "$BENCH" --mode grid --grid-oversample "$GRID_OVERSAMPLE" --grid-expand-neighbors --grid-scan-small --grid-max-cells "$GRID_MAX_CELLS" $GRID_COMMON
         echo ""
     fi
 fi

@@ -23,8 +23,11 @@ Requirements:
 """
 
 import argparse
+import csv
+import io
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -204,13 +207,13 @@ GRID_HNSW_INDEX_CLAUSE = """,
         "efconstruction" = "40",
         "s2_level" = "12",
         "lat_column" = "lat",
-        "lng_column" = "lng"{grid_extras}
+        "lng_column" = "lng"
     )"""
 
 VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE
 
 
-def create_table(conn, mode, dim, gamma=2, grid_extras=""):
+def create_table(conn, mode, dim, gamma=2):
     tbl = table_name(mode)
     execute(conn, f"DROP TABLE IF EXISTS {tbl}")
 
@@ -221,7 +224,7 @@ def create_table(conn, mode, dim, gamma=2, grid_extras=""):
     elif mode.startswith("acorn_gamma"):
         idx = ACORN_GAMMA_INDEX_CLAUSE.format(dim=dim, gamma=gamma)
     elif mode.startswith("grid"):
-        idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim, grid_extras=grid_extras)
+        idx = GRID_HNSW_INDEX_CLAUSE.format(dim=dim)
     else:
         idx = HNSW_INDEX_CLAUSE.format(dim=dim)
 
@@ -237,7 +240,8 @@ def create_table(conn, mode, dim, gamma=2, grid_extras=""):
 BATCH_SIZE = 500
 
 
-def load_data(conn, mode, lats, lngs, vecs):
+def load_data_insert(conn, mode, lats, lngs, vecs):
+    """Load data via batch INSERT INTO ... VALUES (fallback method)."""
     tbl = table_name(mode)
     rows = len(lats)
     loaded = 0
@@ -261,6 +265,72 @@ def load_data(conn, mode, lats, lngs, vecs):
     print()
     elapsed = time.time() - t0
     print(f"  Loading complete: {rows} rows in {elapsed:.1f}s")
+
+
+def load_data_stream(host, http_port, mode, lats, lngs, vecs):
+    """Load data via Stream Load (much faster for large datasets)."""
+    tbl = table_name(mode)
+    rows = len(lats)
+    t0 = time.time()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter="\t")
+    for i in range(rows):
+        v_str = "[" + ",".join(f"{x:.6f}" for x in vecs[i]) + "]"
+        writer.writerow([i, f"{lats[i]:.8f}", f"{lngs[i]:.8f}", v_str])
+        if (i + 1) % 10000 == 0:
+            elapsed = time.time() - t0
+            print(f"\r  Prepared {i+1}/{rows} rows for stream load...", end="", flush=True)
+
+    payload = buf.getvalue()
+    print(f"\r  Prepared {rows} rows ({len(payload) / 1048576:.1f} MB). Uploading via Stream Load...")
+
+    label = f"bench_{mode}_{int(time.time())}"
+    url = f"http://{host}:{http_port}/api/{DB_NAME}/{tbl}/_stream_load"
+
+    result = subprocess.run(
+        [
+            "curl", "--location-trusted",
+            "-u", "root:",
+            "-T", "-",
+            "-H", "format: CSV",
+            "-H", "column_separator: \t",
+            "-H", f"label: {label}",
+            "-H", f"columns: id,lat,lng,embedding",
+            url,
+        ],
+        input=payload.encode("utf-8"),
+        capture_output=True,
+        text=True,
+    )
+
+    elapsed = time.time() - t0
+    try:
+        resp = json.loads(result.stdout)
+        status = resp.get("Status", "Unknown")
+        loaded = resp.get("NumberLoadedRows", 0)
+        if status == "Success":
+            print(f"  Stream Load complete: {loaded} rows in {elapsed:.1f}s ({loaded/elapsed:.0f} rows/s)")
+        else:
+            print(f"  Stream Load status: {status} — {resp.get('Message', result.stdout)}")
+            print("  Falling back to batch INSERT...")
+            return False
+    except json.JSONDecodeError:
+        print(f"  Stream Load response: {result.stdout[:500]}")
+        if result.returncode != 0:
+            print(f"  Falling back to batch INSERT...")
+            return False
+    return True
+
+
+def load_data(conn, mode, lats, lngs, vecs, host="127.0.0.1", http_port=8030, use_stream_load=False):
+    """Load data using Stream Load (fast) or batch INSERT (fallback)."""
+    if use_stream_load:
+        ok = load_data_stream(host, http_port, mode, lats, lngs, vecs)
+        if ok:
+            return
+        print("  Stream Load failed, using batch INSERT instead.")
+    load_data_insert(conn, mode, lats, lngs, vecs)
 
 
 # ---------------------------------------------------------------------------
@@ -311,9 +381,19 @@ def run_single_query(conn, sql):
     return rows, latency
 
 
-def run_query_set(conn, mode, query_vecs, k, num_queries, warmup=5):
+def run_query_set(conn, mode, query_vecs, k, num_queries, warmup=5, grid_session_sql=None):
     """Run all query specs against multiple city centers and query vectors."""
-    tbl = table_name(mode)
+    # Grid ablation variants query the base 'grid' table, not separate tables
+    if mode.startswith("grid"):
+        tbl = table_name("grid")
+    else:
+        tbl = table_name(mode)
+
+    if grid_session_sql:
+        print(f"  Setting session variables: {grid_session_sql}")
+        for stmt in grid_session_sql:
+            execute(conn, stmt)
+
     results = {}
 
     for spec in QUERY_SPECS:
@@ -530,6 +610,17 @@ def main():
         default=500,
         help="Grid-HNSW G4: max S2 cover cells (default: 500).",
     )
+    parser.add_argument(
+        "--stream-load",
+        action="store_true",
+        help="Use Stream Load (HTTP PUT to BE) for faster bulk data loading.",
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8030,
+        help="StarRocks BE HTTP port for Stream Load (default: 8030).",
+    )
     args = parser.parse_args()
 
     resolved_mode = args.mode
@@ -575,22 +666,13 @@ def main():
             conn, 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")'
         )
 
-    # Build grid DDL extras from improvement flags
-    grid_extras_parts = []
-    if args.mode == "grid":
-        if args.grid_oversample > 1.0:
-            grid_extras_parts.append(f',\n        "grid_oversample" = "{args.grid_oversample}"')
-        if args.grid_expand_neighbors:
-            grid_extras_parts.append(',\n        "grid_expand_neighbors" = "true"')
-        if args.grid_scan_small:
-            grid_extras_parts.append(',\n        "grid_scan_small_cells" = "true"')
-        if args.grid_max_cells != 500:
-            grid_extras_parts.append(f',\n        "grid_max_cover_cells" = "{args.grid_max_cells}"')
-    grid_extras = "".join(grid_extras_parts)
+    # Grid variants all share the base 'grid' table; their behavior is
+    # controlled via session variables at query time, not DDL properties.
+    data_mode = "grid" if args.mode == "grid" else resolved_mode
 
     need_load = not args.skip_load
     if args.skip_load:
-        tbl = table_name(resolved_mode)
+        tbl = table_name(data_mode)
         try:
             execute(conn, f"SELECT 1 FROM {tbl} LIMIT 1", fetch=True)
             print("[1-3/4] Skipped (--skip-load). Reusing existing table.")
@@ -600,9 +682,9 @@ def main():
 
     if need_load and args.clone_from:
         src = table_name(args.clone_from)
-        tbl = table_name(resolved_mode)
+        tbl = table_name(data_mode)
         print(f"[2/4] Creating table {tbl} ...")
-        create_table(conn, resolved_mode, args.dim, gamma=args.gamma, grid_extras=grid_extras)
+        create_table(conn, data_mode, args.dim, gamma=args.gamma)
         print(f"[3/4] Cloning data: INSERT INTO {tbl} SELECT * FROM {src} ...")
         t0 = time.time()
         execute(conn, f"INSERT INTO {tbl} SELECT * FROM {src}")
@@ -615,10 +697,12 @@ def main():
         lats, lngs, vecs = generate_data(args.rows, args.dim, args.seed)
 
         print("[2/4] Creating table...")
-        create_table(conn, resolved_mode, args.dim, gamma=args.gamma, grid_extras=grid_extras)
+        create_table(conn, data_mode, args.dim, gamma=args.gamma)
 
         print("[3/4] Loading data...")
-        load_data(conn, resolved_mode, lats, lngs, vecs)
+        load_data(conn, data_mode, lats, lngs, vecs,
+                  host=args.host, http_port=args.http_port,
+                  use_stream_load=args.stream_load)
 
         print("  Waiting for data to settle...")
         time.sleep(5)
@@ -627,9 +711,28 @@ def main():
     query_rng = np.random.default_rng(args.seed + 1000)
     query_vecs = query_rng.standard_normal((args.queries, args.dim)).astype(np.float32)
 
+    # Build session-variable SQL for grid improvements (query-time overrides)
+    grid_session_sql = []
+    if args.mode == "grid":
+        grid_session_sql.append(
+            f"SET vector_grid_oversample = {args.grid_oversample}"
+        )
+        grid_session_sql.append(
+            f"SET vector_grid_expand_neighbors = {'true' if args.grid_expand_neighbors else 'false'}"
+        )
+        grid_session_sql.append(
+            f"SET vector_grid_scan_small_cells = {'true' if args.grid_scan_small else 'false'}"
+        )
+        grid_session_sql.append(
+            f"SET vector_grid_max_cover_cells = {args.grid_max_cells}"
+        )
+
     # Run queries
     print("[4/4] Running queries...")
-    results = run_query_set(conn, resolved_mode, query_vecs, args.k, args.queries, args.warmup)
+    results = run_query_set(
+        conn, resolved_mode, query_vecs, args.k, args.queries, args.warmup,
+        grid_session_sql=grid_session_sql if grid_session_sql else None,
+    )
 
     # Compute recall against B0 ground truth
     recalls = {}

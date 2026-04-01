@@ -389,6 +389,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String ENABLE_QUERY_DUMP = "enable_query_dump";
     public static final String QUERY_DEBUG_OPTIONS = "query_debug_options";
     public static final String VECTOR_SEARCH_OPTIONS = "vector_search_options";
+    public static final String VECTOR_GRID_OVERSAMPLE = "vector_grid_oversample";
+    public static final String VECTOR_GRID_EXPAND_NEIGHBORS = "vector_grid_expand_neighbors";
+    public static final String VECTOR_GRID_SCAN_SMALL_CELLS = "vector_grid_scan_small_cells";
+    public static final String VECTOR_GRID_MAX_COVER_CELLS = "vector_grid_max_cover_cells";
 
     // --------------------------- Limitations for Materialized View ------------------------------------ //
     public static final String OPTIMIZER_MATERIALIZED_VIEW_TIMELIMIT = "optimizer_materialized_view_timelimit";
@@ -1129,6 +1133,18 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     @VariableMgr.VarAttr(name = LOG_REJECTED_RECORD_NUM)
     private long logRejectedRecordNum = 0;
+
+    @VarAttr(name = VECTOR_GRID_OVERSAMPLE)
+    private double vectorGridOversample = 1.0;
+
+    @VarAttr(name = VECTOR_GRID_EXPAND_NEIGHBORS)
+    private boolean vectorGridExpandNeighbors = false;
+
+    @VarAttr(name = VECTOR_GRID_SCAN_SMALL_CELLS)
+    private boolean vectorGridScanSmallCells = false;
+
+    @VarAttr(name = VECTOR_GRID_MAX_COVER_CELLS)
+    private int vectorGridMaxCoverCells = 8;
 
     /**
      * Determines whether to enable query tablet affinity. When enabled, attempts to schedule
@@ -4171,6 +4187,38 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setLogRejectedRecordNum(long logRejectedRecordNum) {
         this.logRejectedRecordNum = logRejectedRecordNum;
+    }
+
+    public double getVectorGridOversample() {
+        return vectorGridOversample;
+    }
+
+    public void setVectorGridOversample(double vectorGridOversample) {
+        this.vectorGridOversample = vectorGridOversample;
+    }
+
+    public boolean isVectorGridExpandNeighbors() {
+        return vectorGridExpandNeighbors;
+    }
+
+    public void setVectorGridExpandNeighbors(boolean vectorGridExpandNeighbors) {
+        this.vectorGridExpandNeighbors = vectorGridExpandNeighbors;
+    }
+
+    public boolean isVectorGridScanSmallCells() {
+        return vectorGridScanSmallCells;
+    }
+
+    public void setVectorGridScanSmallCells(boolean vectorGridScanSmallCells) {
+        this.vectorGridScanSmallCells = vectorGridScanSmallCells;
+    }
+
+    public int getVectorGridMaxCoverCells() {
+        return vectorGridMaxCoverCells;
+    }
+
+    public void setVectorGridMaxCoverCells(int vectorGridMaxCoverCells) {
+        this.vectorGridMaxCoverCells = vectorGridMaxCoverCells;
     }
 
     public boolean isEnablePipelineEngine() {

@@ -43,6 +43,7 @@ import com.starrocks.sql.optimizer.operator.scalar.CompoundPredicateOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
 import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 import com.starrocks.sql.optimizer.rule.RuleType;
+import com.starrocks.qe.SessionVariable;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
@@ -141,7 +142,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
                 }
                 if (isGridHnsw) {
                     opts.setUseGridHnsw(true);
-                    applyGridImprovementParams(info.index.getProperties(), opts);
+                    applyGridImprovementParams(context, info.index.getProperties(), opts);
                     extractAcornSpatialParams(predicate, scanOp, opts);
                     opts.setEnableUseANN(true);
                     opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -172,7 +173,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
         }
         if (isGridHnsw) {
             opts.setUseGridHnsw(true);
-            applyGridImprovementParams(info.index.getProperties(), opts);
+            applyGridImprovementParams(context, info.index.getProperties(), opts);
         }
         opts.setUseIVFPQ(VectorIndexParams.VectorIndexType.IVFPQ.name().equalsIgnoreCase(indexType));
         opts.setDistanceColumnName("__vector_" + info.outColumnRef.getName());
@@ -346,36 +347,58 @@ public class RewriteToVectorPlanRule extends TransformationRule {
     }
 
     /**
-     * Extract spatial predicate parameters for ACORN-1 predicate-aware search.
-     *
-     * Read Grid-HNSW improvement flags from index properties and apply them
-     * to VectorSearchOptions (G1: oversample, G2: neighbor expansion, G4: max cover cells).
+     * Read Grid-HNSW improvement flags from session variables first (query-time override),
+     * falling back to index DDL properties if not set.
+     * Session variables take priority so that all grid variants can share one table.
      */
-    private void applyGridImprovementParams(Map<String, String> props, VectorSearchOptions opts) {
-        String oversample = props.getOrDefault("grid_oversample",
-                props.getOrDefault("GRID_OVERSAMPLE", null));
-        if (oversample != null) {
-            try {
-                opts.setGridOversample(Float.parseFloat(oversample));
-            } catch (NumberFormatException ignored) {
+    private void applyGridImprovementParams(OptimizerContext context,
+                                            Map<String, String> props,
+                                            VectorSearchOptions opts) {
+        SessionVariable sv = context.getSessionVariable();
+
+        if (sv.getVectorGridOversample() > 1.0) {
+            opts.setGridOversample((float) sv.getVectorGridOversample());
+        } else {
+            String oversample = props.getOrDefault("grid_oversample",
+                    props.getOrDefault("GRID_OVERSAMPLE", null));
+            if (oversample != null) {
+                try {
+                    opts.setGridOversample(Float.parseFloat(oversample));
+                } catch (NumberFormatException ignored) {
+                }
             }
         }
-        String expandNeighbors = props.getOrDefault("grid_expand_neighbors",
-                props.getOrDefault("GRID_EXPAND_NEIGHBORS", null));
-        if ("true".equalsIgnoreCase(expandNeighbors)) {
+
+        if (sv.isVectorGridExpandNeighbors()) {
             opts.setGridExpandNeighbors(true);
+        } else {
+            String expandNeighbors = props.getOrDefault("grid_expand_neighbors",
+                    props.getOrDefault("GRID_EXPAND_NEIGHBORS", null));
+            if ("true".equalsIgnoreCase(expandNeighbors)) {
+                opts.setGridExpandNeighbors(true);
+            }
         }
-        String scanSmallCells = props.getOrDefault("grid_scan_small_cells",
-                props.getOrDefault("GRID_SCAN_SMALL_CELLS", null));
-        if ("true".equalsIgnoreCase(scanSmallCells)) {
+
+        if (sv.isVectorGridScanSmallCells()) {
             opts.setGridScanSmallCells(true);
+        } else {
+            String scanSmallCells = props.getOrDefault("grid_scan_small_cells",
+                    props.getOrDefault("GRID_SCAN_SMALL_CELLS", null));
+            if ("true".equalsIgnoreCase(scanSmallCells)) {
+                opts.setGridScanSmallCells(true);
+            }
         }
-        String maxCoverCells = props.getOrDefault("grid_max_cover_cells",
-                props.getOrDefault("GRID_MAX_COVER_CELLS", null));
-        if (maxCoverCells != null) {
-            try {
-                opts.setGridMaxCoverCells(Integer.parseInt(maxCoverCells));
-            } catch (NumberFormatException ignored) {
+
+        if (sv.getVectorGridMaxCoverCells() != 8) {
+            opts.setGridMaxCoverCells(sv.getVectorGridMaxCoverCells());
+        } else {
+            String maxCoverCells = props.getOrDefault("grid_max_cover_cells",
+                    props.getOrDefault("GRID_MAX_COVER_CELLS", null));
+            if (maxCoverCells != null) {
+                try {
+                    opts.setGridMaxCoverCells(Integer.parseInt(maxCoverCells));
+                } catch (NumberFormatException ignored) {
+                }
             }
         }
     }
