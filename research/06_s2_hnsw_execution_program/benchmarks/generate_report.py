@@ -448,9 +448,163 @@ def generate_analysis(data_table, available_modes, mode_labels=None):
     return "\n".join(sections)
 
 
+def _recall_color(recall):
+    """Return a CSS background color for a recall value (0.0-1.0)."""
+    if recall is None:
+        return "#f8f9fa"
+    r = max(0.0, min(1.0, recall))
+    if r >= 0.95:
+        return "#d4edda"
+    elif r >= 0.80:
+        return "#d1ecf1"
+    elif r >= 0.50:
+        return "#fff3cd"
+    elif r >= 0.20:
+        return "#fde2c8"
+    else:
+        return "#f8d7da"
+
+
+def _recall_class(recall):
+    if recall is None:
+        return "rc-na"
+    if recall >= 0.95:
+        return "rc-great"
+    elif recall >= 0.80:
+        return "rc-good"
+    elif recall >= 0.50:
+        return "rc-fair"
+    elif recall >= 0.20:
+        return "rc-poor"
+    return "rc-bad"
+
+
+def _build_recall_heatmap(data_table, available_modes, mode_labels):
+    """Recall-focused heatmap table: modes as rows, query types as columns."""
+    query_types = [row["query_type"] for row in data_table]
+    qt_labels = [row["label"] for row in data_table]
+
+    html = '<table class="heatmap-table"><thead><tr><th class="sticky-col">Strategy</th>'
+    for label in qt_labels:
+        html += f"<th>{label}</th>"
+    html += "<th>Average</th></tr></thead><tbody>"
+
+    for mode in available_modes:
+        label = mode_labels.get(mode, mode)
+        html += f'<tr><td class="sticky-col mode-label">{label}</td>'
+        recalls = []
+        for row in data_table:
+            d = row.get(mode, {})
+            rc = d.get("recall")
+            recalls.append(rc)
+            if rc is not None:
+                cls = _recall_class(rc)
+                html += f'<td class="{cls}">{rc:.3f}</td>'
+            else:
+                html += '<td class="rc-na">n/a</td>'
+        valid = [r for r in recalls if r is not None]
+        avg = sum(valid) / len(valid) if valid else None
+        if avg is not None:
+            cls = _recall_class(avg)
+            html += f'<td class="{cls} avg-cell">{avg:.3f}</td>'
+        else:
+            html += '<td class="rc-na avg-cell">n/a</td>'
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
+
+
+def _build_detail_tables(data_table, available_modes, mode_labels):
+    """Per-query-type detail cards: one compact table per query type."""
+    cards = []
+    for row in data_table:
+        qt = row["query_type"]
+        label = row["label"]
+
+        best_p50 = None
+        best_recall = None
+        for mode in available_modes:
+            d = row.get(mode, {})
+            p50 = d.get("p50", 0)
+            rc = d.get("recall")
+            if mode != "b0" and p50 > 0:
+                if best_p50 is None or p50 < best_p50:
+                    best_p50 = p50
+            if rc is not None and mode != "b0":
+                if best_recall is None or rc > best_recall:
+                    best_recall = rc
+
+        card = f'<div class="detail-card"><h3>{label}</h3>'
+        card += '<table class="detail-table"><thead><tr>'
+        card += "<th>Strategy</th><th>p50 ms</th><th>p95 ms</th><th>p99 ms</th>"
+        card += "<th>Recall</th><th>Speedup</th></tr></thead><tbody>"
+
+        for mode in available_modes:
+            d = row.get(mode, {})
+            p50 = d.get("p50", 0)
+            p95 = d.get("p95", 0)
+            p99 = d.get("p99", 0)
+            rc = d.get("recall")
+            sp = d.get("speedup", 0)
+            ml = mode_labels.get(mode, mode)
+
+            p50_cls = ' class="best-val"' if p50 == best_p50 and mode != "b0" else ""
+            rc_cls = _recall_class(rc) if rc is not None else "rc-na"
+            is_best_rc = rc == best_recall and mode != "b0" and rc is not None
+            rc_extra = " best-val" if is_best_rc else ""
+
+            rc_str = f"{rc:.3f}" if rc is not None else "n/a"
+            sp_str = f"{sp:.2f}x" if sp else "1.00x"
+
+            card += f"<tr>"
+            card += f'<td class="mode-label">{ml}</td>'
+            card += f"<td{p50_cls}>{p50:.1f}</td>"
+            card += f"<td>{p95:.1f}</td>"
+            card += f"<td>{p99:.1f}</td>"
+            card += f'<td class="{rc_cls}{rc_extra}">{rc_str}</td>'
+            card += f"<td>{sp_str}</td>"
+            card += "</tr>"
+
+        card += "</tbody></table></div>"
+        cards.append(card)
+
+    return "\n".join(cards)
+
+
+def _build_summary_cards(data_table, available_modes, mode_labels, mode_colors):
+    """Top-level summary cards: one per non-B0 mode with avg recall and speedup."""
+    cards = []
+    for mode in available_modes:
+        if mode == "b0":
+            continue
+        label = mode_labels.get(mode, mode)
+        color = mode_colors.get(mode, "#6c757d")
+        recalls = [
+            r[mode]["recall"]
+            for r in data_table
+            if r.get(mode, {}).get("recall") is not None
+        ]
+        speedups = [r[mode]["speedup"] for r in data_table if mode in r]
+        avg_recall = sum(recalls) / len(recalls) if recalls else 0
+        avg_speedup = sum(speedups) / len(speedups) if speedups else 0
+        rc_cls = _recall_class(avg_recall)
+        cards.append(
+            f'<div class="summary-card" style="border-top: 4px solid {color}">'
+            f'<div class="sc-name">{label}</div>'
+            f'<div class="sc-metrics">'
+            f'<div class="sc-metric"><span class="sc-label">Avg Recall</span>'
+            f'<span class="sc-value {rc_cls}">{avg_recall:.3f}</span></div>'
+            f'<div class="sc-metric"><span class="sc-label">Avg Speedup</span>'
+            f'<span class="sc-value">{avg_speedup:.2f}x</span></div>'
+            f'</div></div>'
+        )
+    return "\n".join(cards)
+
+
 def generate_html_report(all_results, charts_b64, data_table, available_modes, output_path,
                          mode_labels=None, mode_colors=None):
     mode_labels = mode_labels or MODE_LABELS
+    mode_colors = mode_colors or MODE_COLORS
     ref = all_results[available_modes[0]]
     rows = ref.get("rows", "?")
     dim = ref.get("dim", "?")
@@ -458,30 +612,9 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     analysis = generate_analysis(data_table, available_modes, mode_labels)
-
-    table_html = "<table><thead><tr><th>Query Type</th>"
-    for mode in available_modes:
-        label = mode_labels.get(mode, mode)
-        table_html += f"<th colspan='4'>{label}</th>"
-    table_html += "</tr><tr><th></th>"
-    for _ in available_modes:
-        table_html += "<th>p50 ms</th><th>p95 ms</th><th>Recall</th><th>Speedup</th>"
-    table_html += "</tr></thead><tbody>"
-
-    for row in data_table:
-        table_html += f"<tr><td>{row['label']}</td>"
-        for mode in available_modes:
-            d = row.get(mode, {})
-            rc_str = f"{d['recall']:.3f}" if d.get("recall") is not None else "n/a"
-            sp_str = f"{d['speedup']:.2f}x" if d.get("speedup") else "1.00x"
-            table_html += (
-                f"<td>{d.get('p50', 0):.1f}</td>"
-                f"<td>{d.get('p95', 0):.1f}</td>"
-                f"<td>{rc_str}</td>"
-                f"<td>{sp_str}</td>"
-            )
-        table_html += "</tr>"
-    table_html += "</tbody></table>"
+    recall_heatmap = _build_recall_heatmap(data_table, available_modes, mode_labels)
+    detail_tables = _build_detail_tables(data_table, available_modes, mode_labels)
+    summary_cards = _build_summary_cards(data_table, available_modes, mode_labels, mode_colors)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -490,42 +623,102 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
 <title>Spatial-Vector Benchmark Report</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-         line-height: 1.6; color: #1a1a2e; background: #f8f9fa; padding: 2rem; }}
-  .container {{ max-width: 1200px; margin: 0 auto; }}
-  h1 {{ font-size: 2rem; color: #0d1b2a; margin-bottom: 0.5rem;
-        border-bottom: 3px solid #198754; padding-bottom: 0.5rem; }}
-  .subtitle {{ color: #6c757d; margin-bottom: 2rem; font-size: 0.95rem; }}
-  h2 {{ font-size: 1.4rem; color: #1b263b; margin: 2rem 0 1rem; }}
-  h3 {{ font-size: 1.1rem; color: #415a77; margin: 1.5rem 0 0.5rem; }}
-  p, li {{ margin-bottom: 0.5rem; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         line-height: 1.6; color: #1e293b; background: #f1f5f9; padding: 2rem; }}
+  .container {{ max-width: 1400px; margin: 0 auto; }}
+  h1 {{ font-size: 1.75rem; color: #0f172a; margin-bottom: 0.25rem; font-weight: 700; }}
+  .subtitle {{ color: #64748b; margin-bottom: 1.5rem; font-size: 0.875rem; }}
+  h2 {{ font-size: 1.25rem; color: #1e293b; margin: 2.5rem 0 1rem;
+        padding-bottom: 0.5rem; border-bottom: 2px solid #e2e8f0; font-weight: 600; }}
+  h3 {{ font-size: 1rem; color: #334155; margin: 0 0 0.75rem; font-weight: 600; }}
+  p, li {{ margin-bottom: 0.5rem; font-size: 0.9rem; }}
   ul {{ padding-left: 1.5rem; }}
-  .chart {{ background: white; border-radius: 8px; padding: 1rem;
-            margin: 1.5rem 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  .chart img {{ width: 100%; height: auto; }}
-  table {{ width: 100%; border-collapse: collapse; margin: 1.5rem 0;
-           background: white; border-radius: 8px; overflow: hidden;
-           box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  th {{ background: #1b263b; color: white; padding: 0.75rem 0.5rem;
-       font-size: 0.85rem; text-align: center; }}
-  td {{ padding: 0.6rem 0.5rem; text-align: center; font-size: 0.85rem;
-       border-bottom: 1px solid #e9ecef; }}
-  tr:hover td {{ background: #f1f3f5; }}
-  .meta {{ display: flex; gap: 2rem; background: white; padding: 1rem 1.5rem;
-           border-radius: 8px; margin-bottom: 2rem;
-           box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
-  .meta-item {{ font-size: 0.9rem; }}
-  .meta-item strong {{ color: #198754; }}
-  code {{ background: #e9ecef; padding: 0.15rem 0.4rem; border-radius: 3px;
-          font-size: 0.85rem; }}
-  .footer {{ margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #dee2e6;
-             color: #6c757d; font-size: 0.8rem; text-align: center; }}
+  code {{ background: #e2e8f0; padding: 0.125rem 0.375rem; border-radius: 3px;
+          font-size: 0.8rem; font-family: 'SF Mono', Monaco, monospace; }}
+
+  .meta {{ display: flex; gap: 1.5rem; flex-wrap: wrap; background: white;
+           padding: 1rem 1.25rem; border-radius: 10px; margin-bottom: 1.5rem;
+           box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }}
+  .meta-item {{ font-size: 0.85rem; }}
+  .meta-item strong {{ color: #0f766e; }}
+
+  .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                    gap: 1rem; margin: 1.5rem 0; }}
+  .summary-card {{ background: white; border-radius: 10px; padding: 1rem 1.25rem;
+                   box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }}
+  .sc-name {{ font-weight: 600; font-size: 0.85rem; color: #334155; margin-bottom: 0.75rem; }}
+  .sc-metrics {{ display: flex; gap: 1.5rem; }}
+  .sc-metric {{ display: flex; flex-direction: column; }}
+  .sc-label {{ font-size: 0.7rem; color: #94a3b8; text-transform: uppercase;
+               letter-spacing: 0.05em; font-weight: 500; }}
+  .sc-value {{ font-size: 1.25rem; font-weight: 700; color: #1e293b; }}
+
+  .heatmap-table {{ width: 100%; border-collapse: separate; border-spacing: 0;
+                    background: white; border-radius: 10px; overflow: hidden;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }}
+  .heatmap-table th {{ background: #1e293b; color: #f8fafc; padding: 0.625rem 0.75rem;
+                       font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+                       font-weight: 600; text-align: center; white-space: nowrap; }}
+  .heatmap-table td {{ padding: 0.5rem 0.75rem; text-align: center; font-size: 0.85rem;
+                       font-weight: 600; border-bottom: 1px solid #f1f5f9;
+                       font-variant-numeric: tabular-nums; }}
+  .heatmap-table tr:last-child td {{ border-bottom: none; }}
+  .heatmap-table tr:hover td {{ filter: brightness(0.97); }}
+
+  .rc-great {{ background: #dcfce7; color: #166534; }}
+  .rc-good {{ background: #dbeafe; color: #1e40af; }}
+  .rc-fair {{ background: #fef9c3; color: #854d0e; }}
+  .rc-poor {{ background: #fed7aa; color: #9a3412; }}
+  .rc-bad {{ background: #fecaca; color: #991b1b; }}
+  .rc-na {{ background: #f8fafc; color: #94a3b8; }}
+
+  .mode-label {{ text-align: left !important; font-weight: 600; color: #334155;
+                 white-space: nowrap; }}
+  .avg-cell {{ font-weight: 700 !important; border-left: 2px solid #cbd5e1; }}
+  .best-val {{ font-weight: 800; text-decoration: underline; text-decoration-thickness: 2px;
+               text-underline-offset: 2px; }}
+  .sticky-col {{ position: sticky; left: 0; background: inherit; z-index: 1; }}
+  .heatmap-table th.sticky-col {{ background: #1e293b; z-index: 2; }}
+
+  .detail-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+                   gap: 1.25rem; margin: 1.5rem 0; }}
+  .detail-card {{ background: white; border-radius: 10px; padding: 1.25rem;
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }}
+  .detail-table {{ width: 100%; border-collapse: collapse; }}
+  .detail-table th {{ background: #f8fafc; color: #475569; padding: 0.5rem 0.625rem;
+                      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+                      font-weight: 600; text-align: center; border-bottom: 2px solid #e2e8f0; }}
+  .detail-table td {{ padding: 0.4rem 0.625rem; text-align: center; font-size: 0.8rem;
+                      border-bottom: 1px solid #f1f5f9;
+                      font-variant-numeric: tabular-nums; }}
+  .detail-table tr:last-child td {{ border-bottom: none; }}
+  .detail-table tr:hover td {{ background: #f8fafc; }}
+
+  .chart {{ background: white; border-radius: 10px; padding: 1.25rem;
+            margin: 1.25rem 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            border: 1px solid #e2e8f0; }}
+  .chart img {{ width: 100%; height: auto; display: block; }}
+
+  .footer {{ margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e2e8f0;
+             color: #94a3b8; font-size: 0.75rem; text-align: center; }}
+
+  .legend {{ display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.75rem 0; }}
+  .legend-item {{ display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem;
+                  color: #64748b; }}
+  .legend-swatch {{ width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); }}
+
+  @media (max-width: 768px) {{
+    body {{ padding: 1rem; }}
+    .detail-grid {{ grid-template-columns: 1fr; }}
+    .summary-grid {{ grid-template-columns: 1fr 1fr; }}
+    .heatmap-table {{ font-size: 0.75rem; }}
+  }}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Spatial-Vector Benchmark Report</h1>
-  <p class="subtitle">Spatial-Vector Benchmark Comparison &mdash; Generated {timestamp}</p>
+  <p class="subtitle">Generated {timestamp}</p>
 
   <div class="meta">
     <div class="meta-item"><strong>Rows:</strong> {rows:,}</div>
@@ -534,15 +727,32 @@ def generate_html_report(all_results, charts_b64, data_table, available_modes, o
     <div class="meta-item"><strong>Modes:</strong> {', '.join(mode_labels.get(m, m) for m in available_modes)}</div>
   </div>
 
-  <h2>Results Table</h2>
-  {table_html}
+  <h2>Strategy Performance Summary</h2>
+  <div class="summary-grid">
+    {summary_cards}
+  </div>
+
+  <h2>Recall Heatmap</h2>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:#dcfce7"></div> &ge; 0.95</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#dbeafe"></div> 0.80 &ndash; 0.94</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#fef9c3"></div> 0.50 &ndash; 0.79</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#fed7aa"></div> 0.20 &ndash; 0.49</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#fecaca"></div> &lt; 0.20</div>
+  </div>
+  {recall_heatmap}
+
+  <h2>Detailed Metrics by Query Type</h2>
+  <div class="detail-grid">
+    {detail_tables}
+  </div>
 
   <h2>Latency Charts</h2>
   <div class="chart"><img src="data:image/png;base64,{charts_b64['p50']}" alt="p50 latency"></div>
   <div class="chart"><img src="data:image/png;base64,{charts_b64['p95']}" alt="p95 latency"></div>
   <div class="chart"><img src="data:image/png;base64,{charts_b64['p99']}" alt="p99 latency"></div>
 
-  <h2>Recall</h2>
+  <h2>Recall Comparison</h2>
   <div class="chart"><img src="data:image/png;base64,{charts_b64['recall']}" alt="Recall"></div>
 
   <h2>Speedup vs Brute Force</h2>

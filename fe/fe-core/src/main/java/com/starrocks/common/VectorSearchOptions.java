@@ -54,7 +54,7 @@ public class VectorSearchOptions {
     private float gridOversample = 1.0f;
     private boolean gridExpandNeighbors = false;
     private boolean gridScanSmallCells = false;
-    private int gridMaxCoverCells = 8;
+    private int gridMaxCoverCells = 500;
     private FallbackMode fallbackMode = FallbackMode.NONE;
 
     private String distanceColumnName = "";
@@ -268,7 +268,7 @@ public class VectorSearchOptions {
             if (gridScanSmallCells) {
                 queryParams.put("grid_scan_small_cells", "true");
             }
-            if (gridMaxCoverCells != 8) {
+            if (gridMaxCoverCells != 500) {
                 queryParams.put("grid_max_cover_cells", String.valueOf(gridMaxCoverCells));
             }
             if (acornPredicateType != AcornPredicateType.NONE) {

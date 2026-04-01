@@ -162,7 +162,17 @@ Status SpatialVectorIndexReader::search(const std::vector<uint64_t>& query_cell_
         partition_results.push_back(std::move(pr));
     }
 
-    merge_partition_results(partition_results, k, result_ids, result_distances);
+    // Return ALL candidates sorted by distance. The spatial predicate in the
+    // WHERE clause handles final filtering — truncating here to k loses
+    // in-region candidates that sit behind out-of-region ones from boundary
+    // covering cells.
+    int64_t total_candidates = 0;
+    for (const auto& pr : partition_results) {
+        for (auto id : pr.local_ids) {
+            if (id >= 0) total_candidates++;
+        }
+    }
+    merge_partition_results(partition_results, std::max(total_candidates, k), result_ids, result_distances);
     return Status::OK();
 }
 #endif

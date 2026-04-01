@@ -44,7 +44,7 @@ GAMMA=2
 GAMMA_SWEEP=0
 GRID_ABLATION=0
 GRID_OVERSAMPLE="3"
-GRID_MAX_CELLS="32"
+GRID_MAX_CELLS="500"
 
 while [[ $# -gt 0 ]]; do
     case $1 in

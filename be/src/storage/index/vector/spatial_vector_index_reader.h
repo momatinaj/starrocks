@@ -110,10 +110,10 @@ private:
     std::shared_ptr<TabletIndex> _tablet_index;
     std::map<std::string, std::string> _query_params;
 
-    float _oversample_factor = 1.0f;
+    float _oversample_factor = 5.0f;
     bool _expand_neighbors = false;
     bool _scan_small_cells = false;
-    int _max_cover_cells = 8;
+    int _max_cover_cells = 500;
 };
 
 } // namespace starrocks

@@ -63,6 +63,7 @@ These modes are supported in `run_benchmark.py` but are not part of the default 
 - `efConstruction`: 40 (default)
 - `efSearch`: auto-tuned (40 without predicate, 400 with predicate)
 - Grid-HNSW `s2_level`: 12 (default)
+- Grid-HNSW `oversample`: 5.0 (default), `max_cover_cells`: 500 (default)
 
 ## Default Benchmark Matrix
 

@@ -840,12 +840,15 @@ Status SegmentIterator::_init_ann_reader() {
                 int s2_level = _vector_index_ctx->spatial_reader->manifest().s2_level();
                 auto& qp = _vector_index_ctx->query_params;
 
-                // G1: per-partition oversampling
+                // G1: per-partition oversampling — default 5x to compensate for
+                // boundary covering cells that extend beyond the spatial predicate.
                 auto os_it = qp.find("grid_oversample");
                 if (os_it != qp.end()) {
                     float factor = std::stof(os_it->second);
                     _vector_index_ctx->spatial_reader->set_oversample_factor(factor);
                     LOG(INFO) << "Grid-HNSW: oversample_factor=" << factor;
+                } else {
+                    LOG(INFO) << "Grid-HNSW: using default oversample_factor=5.0";
                 }
 
                 // G3: small-cell brute-force fallback
@@ -862,14 +865,15 @@ Status SegmentIterator::_init_ann_reader() {
                     LOG(INFO) << "Grid-HNSW: expand_neighbors=true";
                 }
 
-                // G4: configurable max cover cells
-                int max_cover = 8;
+                // G4: configurable max cover cells — default must be high enough
+                // to fully cover large spatial predicates at the given S2 level.
+                int max_cover = 500;
                 auto mc_it = qp.find("grid_max_cover_cells");
                 if (mc_it != qp.end()) {
                     max_cover = std::stoi(mc_it->second);
-                    _vector_index_ctx->spatial_reader->set_max_cover_cells(max_cover);
                     LOG(INFO) << "Grid-HNSW: max_cover_cells=" << max_cover;
                 }
+                _vector_index_ctx->spatial_reader->set_max_cover_cells(max_cover);
 
                 auto pt_it = qp.find("grid_predicate_type");
                 if (pt_it != qp.end()) {
