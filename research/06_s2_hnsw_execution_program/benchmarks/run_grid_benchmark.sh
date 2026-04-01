@@ -131,6 +131,9 @@ echo ""
 # ------------------------------------------------------------------
 # Step 5: Grid ablation variants (always --skip-load, reuse same table)
 # ------------------------------------------------------------------
+echo ">> Cleaning stale grid ablation result files..."
+rm -f "$OUT"/grid_g*.json 2>/dev/null
+
 GRID_COMMON="$COMMON --skip-load"
 
 echo "============================================================"

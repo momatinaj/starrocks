@@ -247,6 +247,10 @@ if [ -z "$ONLY_MODE" ] || [ "$ONLY_MODE" = "grid" ]; then
     # Behavior is changed via session variables, not DDL properties.
     # No data reload or table creation is needed.
     if [ "$GRID_ABLATION" -eq 1 ]; then
+        # Clean stale grid ablation results from previous runs
+        echo ">> Cleaning stale grid ablation result files..."
+        rm -f "$OUT"/grid_g*.json 2>/dev/null
+
         GRID_COMMON="$COMMON_ARGS --skip-load"
 
         echo "============================================================"

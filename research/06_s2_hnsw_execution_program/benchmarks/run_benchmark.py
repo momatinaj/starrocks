@@ -389,10 +389,25 @@ def run_query_set(conn, mode, query_vecs, k, num_queries, warmup=5, grid_session
     else:
         tbl = table_name(mode)
 
+    # Sanity check: verify table has data
+    try:
+        row_count = execute(conn, f"SELECT COUNT(*) FROM {tbl}", fetch=True)
+        cnt = row_count[0][0] if row_count else 0
+        print(f"  Table {tbl}: {cnt} rows")
+        if cnt == 0:
+            print(f"  WARNING: Table {tbl} is empty! Results will be meaningless.")
+    except Exception as e:
+        print(f"  WARNING: Could not count rows in {tbl}: {e}")
+
     if grid_session_sql:
-        print(f"  Setting session variables: {grid_session_sql}")
+        print(f"  Setting session variables for grid mode '{mode}':")
         for stmt in grid_session_sql:
-            execute(conn, stmt)
+            try:
+                print(f"    {stmt}")
+                execute(conn, stmt)
+            except Exception as e:
+                print(f"    WARNING: SET failed: {e}")
+                print(f"    Session variables may not be supported. Grid improvements will use DDL defaults.")
 
     results = {}
 
@@ -711,21 +726,27 @@ def main():
     query_rng = np.random.default_rng(args.seed + 1000)
     query_vecs = query_rng.standard_normal((args.queries, args.dim)).astype(np.float32)
 
-    # Build session-variable SQL for grid improvements (query-time overrides)
+    # Build session-variable SQL for grid ablation variants only.
+    # The baseline grid mode uses defaults (no SET needed).
+    # Only SET values that differ from the session variable defaults.
     grid_session_sql = []
-    if args.mode == "grid":
-        grid_session_sql.append(
-            f"SET vector_grid_oversample = {args.grid_oversample}"
-        )
-        grid_session_sql.append(
-            f"SET vector_grid_expand_neighbors = {'true' if args.grid_expand_neighbors else 'false'}"
-        )
-        grid_session_sql.append(
-            f"SET vector_grid_scan_small_cells = {'true' if args.grid_scan_small else 'false'}"
-        )
-        grid_session_sql.append(
-            f"SET vector_grid_max_cover_cells = {args.grid_max_cells}"
-        )
+    if args.mode == "grid" and resolved_mode != "grid":
+        if args.grid_oversample > 1.0:
+            grid_session_sql.append(
+                f"SET vector_grid_oversample = {args.grid_oversample}"
+            )
+        if args.grid_expand_neighbors:
+            grid_session_sql.append(
+                "SET vector_grid_expand_neighbors = true"
+            )
+        if args.grid_scan_small:
+            grid_session_sql.append(
+                "SET vector_grid_scan_small_cells = true"
+            )
+        if args.grid_max_cells != 8:
+            grid_session_sql.append(
+                f"SET vector_grid_max_cover_cells = {args.grid_max_cells}"
+            )
 
     # Run queries
     print("[4/4] Running queries...")
