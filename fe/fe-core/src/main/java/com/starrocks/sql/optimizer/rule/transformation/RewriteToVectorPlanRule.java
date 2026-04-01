@@ -356,7 +356,7 @@ public class RewriteToVectorPlanRule extends TransformationRule {
                                             VectorSearchOptions opts) {
         SessionVariable sv = context.getSessionVariable();
 
-        if (sv.getVectorGridOversample() > 1.0) {
+        if (Math.abs(sv.getVectorGridOversample() - 5.0) > 0.001) {
             opts.setGridOversample((float) sv.getVectorGridOversample());
         } else {
             String oversample = props.getOrDefault("grid_oversample",

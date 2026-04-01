@@ -1135,7 +1135,7 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     private long logRejectedRecordNum = 0;
 
     @VarAttr(name = VECTOR_GRID_OVERSAMPLE)
-    private double vectorGridOversample = 1.0;
+    private double vectorGridOversample = 5.0;
 
     @VarAttr(name = VECTOR_GRID_EXPAND_NEIGHBORS)
     private boolean vectorGridExpandNeighbors = false;

@@ -51,7 +51,7 @@ public class VectorSearchOptions {
     private boolean useAcornGamma = false;
     private int acornGamma = 2;
     private boolean useGridHnsw = false;
-    private float gridOversample = 1.0f;
+    private float gridOversample = 5.0f;
     private boolean gridExpandNeighbors = false;
     private boolean gridScanSmallCells = false;
     private int gridMaxCoverCells = 500;

@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH="$SCRIPT_DIR/run_benchmark.py"
 COMPARE="$SCRIPT_DIR/compare_results.py"
 REPORT="$SCRIPT_DIR/generate_report.py"
-OUT="$SCRIPT_DIR/results"
+OUT="$SCRIPT_DIR/results/grid"
 
 HOST="127.0.0.1"
 PORT=9030
@@ -26,7 +26,7 @@ QUERIES=3
 WARMUP=0
 SKIP_LOAD=""
 SKIP_REBUILD=0
-GRID_OVERSAMPLE="3"
+GRID_OVERSAMPLE="10"
 GRID_MAX_CELLS="1000"
 STREAM_LOAD=""
 
@@ -107,12 +107,40 @@ echo ""
 mysql -h "$HOST" -P "$PORT" -u root -e 'ADMIN SET FRONTEND CONFIG ("enable_experimental_vector" = "true")' 2>/dev/null
 
 # ------------------------------------------------------------------
-# Step 3: Ensure B0 ground truth exists
+# Pre-flight: verify FE has grid session variables
 # ------------------------------------------------------------------
+echo ">> Pre-flight: checking FE session variables..."
+SET_RESULT=$(mysql -h "$HOST" -P "$PORT" -u root -N -e "SET vector_grid_oversample = 5.0; SHOW VARIABLES LIKE 'vector_grid_oversample'" 2>&1)
+if echo "$SET_RESULT" | grep -qi "error\|unknown\|variable.*not"; then
+    echo ""
+    echo "FATAL: FE does not have grid session variables."
+    echo "       The running FE binary is outdated. You MUST rebuild:"
+    echo ""
+    echo "  docker-compose -f docker-compose.dev.yml run --rm build-fe"
+    echo "  docker-compose -f docker-compose.dev.yml restart starrocks-custom-fe"
+    echo "  sleep 30"
+    echo ""
+    echo "  Then re-run this script."
+    exit 1
+fi
+echo "   OK — grid session variables recognized"
+echo ""
+
+# ------------------------------------------------------------------
+# Step 3: Ensure B0 ground truth exists in grid results dir
+# ------------------------------------------------------------------
+PARENT_OUT="$(dirname "$OUT")"
 B0_RESULTS=$(ls -t "$OUT"/b0_*.json 2>/dev/null | head -1)
 if [ -z "$B0_RESULTS" ]; then
-    echo ">> No B0 ground truth found. Running baseline (one-time)..."
-    python3 "$BENCH" --mode b0 $COMMON
+    PARENT_B0=$(ls -t "$PARENT_OUT"/b0_*.json 2>/dev/null | head -1)
+    if [ -n "$PARENT_B0" ]; then
+        echo ">> Copying B0 ground truth from parent results dir..."
+        cp "$PARENT_B0" "$OUT/"
+        B0_RESULTS="$OUT/$(basename "$PARENT_B0")"
+    else
+        echo ">> No B0 ground truth found. Running baseline (one-time)..."
+        python3 "$BENCH" --mode b0 $COMMON
+    fi
     echo ""
 else
     echo ">> Using cached B0 ground truth: $(basename "$B0_RESULTS")"

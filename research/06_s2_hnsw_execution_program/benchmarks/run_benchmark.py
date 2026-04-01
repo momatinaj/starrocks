@@ -402,12 +402,28 @@ def run_query_set(conn, mode, query_vecs, k, num_queries, warmup=5, grid_session
     if grid_session_sql:
         print(f"  Setting session variables for grid mode '{mode}':")
         for stmt in grid_session_sql:
+            var_name = stmt.split("SET ", 1)[1].split(" =")[0].strip()
+            expected_val = stmt.split("= ", 1)[1].strip().rstrip(";")
+            print(f"    {stmt}")
             try:
-                print(f"    {stmt}")
                 execute(conn, stmt)
             except Exception as e:
-                print(f"    WARNING: SET failed: {e}")
-                print(f"    Session variables may not be supported. Grid improvements will use DDL defaults.")
+                print(f"\n  FATAL: SET failed for '{var_name}': {e}")
+                print(f"         The FE binary does not have grid session variables.")
+                print(f"         You MUST rebuild FE before running grid ablation:")
+                print(f"           docker-compose -f docker-compose.dev.yml run --rm build-fe")
+                print(f"           docker-compose -f docker-compose.dev.yml restart starrocks-custom-fe")
+                sys.exit(1)
+            verify = execute(conn, f"SHOW VARIABLES LIKE '{var_name}'", fetch=True)
+            if verify:
+                actual = str(verify[0][1]) if len(verify[0]) > 1 else "?"
+                print(f"      verified: {var_name} = {actual}")
+                if actual != expected_val and actual != expected_val.rstrip(".0"):
+                    print(f"      WARNING: expected {expected_val}, got {actual}")
+            else:
+                print(f"\n  FATAL: Session variable '{var_name}' not recognized by FE.")
+                print(f"         You MUST rebuild FE before running grid ablation.")
+                sys.exit(1)
 
     results = {}
 
@@ -606,8 +622,8 @@ def main():
     parser.add_argument(
         "--grid-oversample",
         type=float,
-        default=1.0,
-        help="Grid-HNSW G1: per-partition oversample factor (default: 1.0 = off). Ignored for non-grid modes.",
+        default=5.0,
+        help="Grid-HNSW G1: per-partition oversample factor (default: 5.0). Ignored for non-grid modes.",
     )
     parser.add_argument(
         "--grid-expand-neighbors",
@@ -644,7 +660,7 @@ def main():
     elif args.mode == "grid":
         # Build a suffix from active grid improvements for ablation tracking
         grid_tags = []
-        if args.grid_oversample > 1.0:
+        if abs(args.grid_oversample - 5.0) > 0.001:
             grid_tags.append("g1")
         if args.grid_expand_neighbors:
             grid_tags.append("g2")
@@ -731,7 +747,7 @@ def main():
     # Only SET values that differ from the session variable defaults.
     grid_session_sql = []
     if args.mode == "grid" and resolved_mode != "grid":
-        if args.grid_oversample > 1.0:
+        if abs(args.grid_oversample - 5.0) > 0.001:
             grid_session_sql.append(
                 f"SET vector_grid_oversample = {args.grid_oversample}"
             )
@@ -792,7 +808,7 @@ def main():
         "num_queries": args.queries,
         "seed": args.seed,
         "gamma": args.gamma if args.mode == "acorn_gamma" else None,
-        "grid_oversample": args.grid_oversample if args.mode == "grid" and args.grid_oversample > 1.0 else None,
+        "grid_oversample": args.grid_oversample if args.mode == "grid" and abs(args.grid_oversample - 5.0) > 0.001 else None,
         "grid_expand_neighbors": args.grid_expand_neighbors if args.mode == "grid" else None,
         "grid_scan_small_cells": args.grid_scan_small if args.mode == "grid" else None,
         "grid_max_cover_cells": args.grid_max_cells if args.mode == "grid" and args.grid_max_cells != 500 else None,
