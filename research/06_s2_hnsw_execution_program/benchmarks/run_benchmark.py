@@ -207,7 +207,8 @@ GRID_HNSW_INDEX_CLAUSE = """,
         "efconstruction" = "40",
         "s2_level" = "12",
         "lat_column" = "lat",
-        "lng_column" = "lng"
+        "lng_column" = "lng",
+        "min_partition_rows" = "1"
     )"""
 
 VECTOR_INDEX_CLAUSE = HNSW_INDEX_CLAUSE

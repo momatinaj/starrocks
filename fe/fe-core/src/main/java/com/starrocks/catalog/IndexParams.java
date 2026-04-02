@@ -69,6 +69,9 @@ public class IndexParams {
                 null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.S2_LEVEL, false, true,
                 "12", null);
+        register(builder, IndexType.VECTOR, IndexParamType.INDEX, 
+                VectorIndexParams.IndexParamsKey.MIN_PARTITION_ROWS, false, true,
+                "100", null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.LAT_COLUMN, false, false,
                 null, null);
         register(builder, IndexType.VECTOR, IndexParamType.INDEX, VectorIndexParams.IndexParamsKey.LNG_COLUMN, false, false,

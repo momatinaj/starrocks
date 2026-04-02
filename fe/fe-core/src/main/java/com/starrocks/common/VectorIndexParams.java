@@ -166,6 +166,13 @@ public class VectorIndexParams {
             }
         },
 
+        MIN_PARTITION_ROWS(VectorIndexType.GRID_HNSW) {
+            @Override
+            public void check(String value) {
+                validateInteger(value, "MIN_PARTITION_ROWS", 1);
+            }
+        },
+
         LAT_COLUMN(VectorIndexType.GRID_HNSW) {
             @Override
             public void check(String value) {
