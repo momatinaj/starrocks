@@ -9,8 +9,8 @@ Filtered ANN (or constrained ANN) is the general problem of finding approximate 
 ### ACORN: Performant and Predicate-Agnostic Search
 
 **Paper**: Qin et al., "ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and Structured Data"  
-**Venue**: arXiv 2403.04871, 2024  
-**Code**: Adopted by Apache Lucene 10.2.0 (February 2025)
+**Venue**: arXiv:2403.04871 (2024)  
+**Code**: Adopted by Apache Lucene 10.2.0
 
 **Problem**: Filtered ANN where predicates are not known at index build time and can be arbitrary.
 
@@ -25,18 +25,10 @@ Filtered ANN (or constrained ANN) is the general problem of finding approximate 
 3. Only score/rank vectors that pass the predicate
 4. Adaptive threshold: if filter passes >60% of data, fall back to standard HNSW (overhead not worth it)
 
-**Results**: 2-1000x higher throughput at fixed recall compared to prior methods.
-
-**Lucene Implementation (ACORN-1)**:
-- Selectivity-based heuristics: blind 2-hop for low selectivity (≤0.08), directed 2-hop for medium (≤0.4), standard 1-hop for high selectivity (>0.4)
-- Up to 5x faster filtered kNN search with minimal recall degradation
-- Integrated into Elasticsearch 8.x via Lucene 10.2.0
-
 **Relevance to StarRocks**:
 - Predicate-agnostic means spatial predicates work without modification
 - Can be implemented within TenANN's HNSW traversal
 - The selectivity-adaptive approach maps to a cost model in the query planner
-- Already production-proven in Elasticsearch at scale
 
 ---
 
@@ -44,7 +36,6 @@ Filtered ANN (or constrained ANN) is the general problem of finding approximate 
 
 **Paper**: Gollapudi et al., "Filtered-DiskANN: Graph Algorithms for Approximate Nearest Neighbor Search with Filters"  
 **Venue**: ACM Web Conference (WWW), 2023  
-**Author**: Microsoft Research
 
 **Problem**: ANN search with label/attribute filters, optimized for SSD-based search.
 
@@ -57,90 +48,90 @@ Filtered ANN (or constrained ANN) is the general problem of finding approximate 
 1. **StitchedVamana**: Build separate graphs per label, then stitch them together
 2. **FilteredVamana**: Build a single graph with filter-aware pruning
 
-**Results**: Order of magnitude more efficient than prior methods on real-world filtered queries.
-
 **Relevance to StarRocks**:
 - If S2 cell IDs are treated as labels, the filter-aware construction ensures graph connectivity within spatial regions
 - StitchedVamana maps well to a segment-based architecture: build per-spatial-partition graphs, stitch across partitions
-- Requires knowing the spatial partitioning at index build time (unlike ACORN which is predicate-agnostic)
 
 ---
 
-### Compass: General Filtered Search
+### Compass: General Filtered Search across Vector and Structured Data
 
-**Paper**: "Compass: General Filtered Search across Vector and Structured Data"  
-**Venue**: arXiv 2510.27141, 2024
+**Paper**: Ye et al., "Compass: General Filtered Search across Vector and Structured Data"  
+**Venue**: arXiv:2510.27141 (Nov 2025)
 
-**Problem**: General filtered search combining vector similarity with arbitrary relational predicates.
+**Problem**: General filtered search combining high-dimensional vector search with complex relational filtering without new index designs.
 
 **Key Idea — Cooperative Query Execution**:
-- Does not build a new index structure
-- Uses existing HNSW/IVF for vectors and B+-trees for attributes
-- Coordinates candidate generation across both index types
-- Supports arbitrary conjunctions, disjunctions, and range predicates
-
-**Results**: Outperforms NaviX (the prior general framework); matches specialized single-attribute indices.
+- Leverages established index structures: HNSW and IVF for vectors, B+-trees for structured attributes
+- Uses a shared candidate queue to coordinate candidate generation and predicate evaluation across modalities
+- Maintains generality by allowing arbitrary conjunctions, disjunctions, and range predicates
 
 **Relevance to StarRocks**:
-- The cooperative execution model maps naturally to StarRocks' query engine
-- Could combine existing vector index scan with a new spatial index scan
-- Does not require a new unified index structure — simpler to implement as a first step
-- However, may not achieve the performance of a truly hybrid index
+- Maps naturally to StarRocks' query engine by combining existing vector index scan with structured (spatial) index scan
+- Bypasses the need for a completely new unified index structure, making it a highly practical approach
 
 ---
 
-### NaviX: Native Vector Index for Graph DBMSs
+### NaviX: A Native Vector Index Design for Graph DBMSs
 
 **Paper**: Sehgal & Salihoglu, "NaviX: A Native Vector Index Design for Graph DBMSs With Robust Predicate-Agnostic Search Performance"  
-**Venue**: VLDB 2025
+**Venue**: PVLDB 18(11): 4438-4450 (2025)
 
-**Problem**: Vector index deeply integrated with DBMS predicate evaluation.
+**Problem**: Disk-based vector index leveraging the core storage and query-processing of the underlying GDBMS, supporting predicate-agnostic filtered search.
 
-**Key Idea**: Design the vector index as a first-class DBMS component that natively supports predicate evaluation during traversal, rather than treating filtering as an afterthought.
+**Key Idea**: 
+- Native integration in Kuzu GDBMS built on HNSW.
+- Prefiltering approach that passes the selection subset to the kNN operator.
+- Proposes an "adaptive-local" heuristic using the local selectivity of each vector in the HNSW graph to adjust search behavior iteratively.
 
-**Relevance**: Validates the approach of deep DBMS integration for filtered vector search (rather than bolt-on filtering).
+**Relevance**: Validates deep DBMS integration and the importance of adapting search strategies dynamically based on local selectivity.
 
 ---
 
-### UNIFY: Unified Proximity Graph
+### UNIFY: Unified Index for Range Filtered Approximate Nearest Neighbors Search
 
-**Paper**: Referenced in VLDB 2024 proceedings  
-**Problem**: Range-filtered ANNS with pre-, post-, and hybrid filtering strategies.
+**Paper**: Liang et al., "UNIFY: Unified Index for Range Filtered Approximate Nearest Neighbors Search"  
+**Venue**: PVLDB 18(4): 1118-1130 (2024)
+
+**Problem**: Range Filtered Approximate Nearest Neighbors Search (RF-ANNS) over high-dimensional vectors with continuous attributes.
 
 **Key Ideas**:
-- Segmented Inclusive Graph (SIG): partitions the graph by attribute ranges
-- Hierarchical SIG: multi-level partitioning for efficient range queries
-- Supports pre-filtering (search only matching partition), post-filtering (search all, filter results), and hybrid (adaptive combination)
+- Introduces Segmented Inclusive Graph (SIG) which segments the dataset by attribute values
+- Hierarchical Segmented Inclusive Graph (HSIG) enables efficient hybrid filtering with logarithmic complexity and incremental data insertion
+- Supports pre-, post-, and hybrid filtering seamlessly within a single index structure
 
-**Relevance**: The SIG concept directly applies to spatial range queries — partition the HNSW graph by S2 cell levels, search relevant segments.
+**Relevance**: The segmentation of graphs based on ranges directly parallels partitioning HNSW graphs by S2 spatial cell ranges.
 
 ---
 
 ### Dynamic Segment Graph
 
-**Paper**: VLDB 2025  
-**Problem**: Dynamic range-filtered ANN where vectors arrive in arbitrary order.
+**Paper**: Peng et al., "Dynamic Range-Filtering Approximate Nearest Neighbor Search"  
+**Venue**: PVLDB 18(10): 3256-3268 (2025)
+
+**Problem**: Dynamic range-filtered ANN where vectors arrive in arbitrary order, requiring efficient insertions.
 
 **Key Ideas**:
-- Compresses multiple HNSW graphs (one per range segment) into a single graph
-- Maintains search performance with minimal index size increase
-- Handles dynamic insertions without full rebuild
+- Compresses a set of HNSW graphs into a "dynamic segment graph" with lossless capabilities under certain conditions
+- Substantially reduces the index size increment (O(log n) expected new edges per insertion) while preserving query performance
 
-**Relevance**: Important for StarRocks' data ingestion pipeline — new data segments must be indexed without rebuilding the entire index.
+**Relevance**: Crucial for StarRocks' data ingestion pipeline to support dynamic insertions without full index rebuilds.
 
 ---
 
-### WoW: Window-to-Window Incremental Index
+### WoW: A Window-to-Window Incremental Index
 
-**Paper**: arXiv 2508.18617, 2025  
-**Problem**: Range-filtering ANN with incremental index construction.
+**Paper**: Wang et al., "WoW: A Window-to-Window Incremental Index for Range-Filtering Approximate Nearest Neighbor Search"  
+**Venue**: SIGMOD 2026 / arXiv:2508.18617 (Aug 2025)
+
+**Problem**: RFANNS index that needs to be constructed incrementally and handle arbitrary range filters.
 
 **Key Ideas**:
-- Incremental construction: new windows build on previous windows' structure
-- 4x faster queries than other incremental approaches
-- Handles arbitrary range filters
+- Hierarchical window graphs with varying window sizes managed by a Weighted Balanced Tree (WBT)
+- Fully incremental, unordered insertions without data layout reorganization in $O(\log^2 n)$
+- 4x faster query speeds than prior incremental indexes
 
-**Relevance**: Relevant for StarRocks' compaction pipeline — when segments merge, the index should be incrementally updatable.
+**Relevance**: highly relevant for continuous data loading scenarios (like StarRocks Stream Load) where new data batches must be merged dynamically.
 
 ## Strategy Selection by Selectivity
 
@@ -148,11 +139,10 @@ A critical finding across all papers is that the optimal strategy depends on **f
 
 | Selectivity | Best Strategy | Reasoning |
 |-------------|--------------|-----------|
-| Very Low (<1%) | Brute-force on filtered set | Too few candidates for graph traversal to help |
+| Very Low (<1%) | Brute-force on filtered set / Pre-filtering | Too few candidates for graph traversal to help |
 | Low (1-10%) | Pre-filter + brute-force or small HNSW | Graph connectivity too degraded for efficient search |
-| Medium (10-50%) | ACORN-style 2-hop or partition-based search | Best trade-off between filtering and graph utilization |
-| High (50-90%) | Standard HNSW with post-filtering | Most nodes pass filter; overhead of filtering during traversal not worthwhile |
-| Very High (>90%) | Standard HNSW (ignore filter during search) | Nearly all nodes pass; apply filter as post-processing |
+| Medium (10-50%) | ACORN-style 2-hop or Compass cooperative execution | Best trade-off between filtering and graph utilization |
+| High (>50%) | Standard HNSW with post-filtering | Most nodes pass filter; overhead of filtering during traversal not worthwhile |
 
 ## Open Questions
 
